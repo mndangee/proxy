@@ -1,0 +1,664 @@
+@import "tailwindcss";
+
+/* Tailwind가 클래스를 스캔할 경로 (renderer root가 electron/renderer이므로 명시) */
+@source "../app/**/*.tsx";
+@source "../components/**/*.tsx";
+@source "../electron/renderer/**/*.tsx";
+
+/* ============================================
+   Design System - UI Kit v1.0
+   ============================================ */
+
+@theme {
+  /* --- 0. 폰트 (Font) --- */
+  --font-sans: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* --- 1. Color Palette (UI Kit v1.0) --- */
+  --color-black: #000000;
+  --color-white: #ffffff;
+  --color-transparent: transparent;
+
+  /* Primary Blue #306DF2 */
+  --color-primary: #306df2;
+  --color-primary-hover: #2563eb;
+  --color-primary-active: #1d4ed8;
+  --color-primary-disabled: #93c5fd;
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #306df2;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+
+  /* Brand alias (Primary) */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #306df2;
+  --color-brand-600: #306df2;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+
+  /* Neutral (UI Kit: 900 #171C27, 600 #4F596D, 400 #909CAE) */
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #909cae;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #4f596d;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #171c27;
+
+  /* Success #0BBA64 */
+  --color-success: #0bba64;
+  --color-positive-50: #f0fdf4;
+  --color-positive-100: #dcfce7;
+  --color-positive-200: #bbf7d0;
+  --color-positive-300: #86efac;
+  --color-positive-400: #4ade80;
+  --color-positive-500: #0bba64;
+  --color-positive-600: #16a34a;
+  --color-positive-700: #15803d;
+  --color-positive-800: #166534;
+  --color-positive-900: #14532d;
+
+  /* Error #EF4C4C */
+  --color-error: #ef4c4c;
+  --color-negative-50: #fef2f2;
+  --color-negative-100: #fee2e2;
+  --color-negative-200: #fecaca;
+  --color-negative-300: #fca5a5;
+  --color-negative-400: #f87171;
+  --color-negative-500: #ef4c4c;
+  --color-negative-600: #dc2626;
+  --color-negative-700: #b91c1c;
+  --color-negative-800: #991b1b;
+  --color-negative-900: #7f1d1d;
+
+  /* Warning (Star / Badge) */
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-200: #fde68a;
+  --color-warning-300: #fcd34d;
+  --color-warning-400: #fbbf24;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #ea580c;
+  --color-warning-700: #c2410c;
+  --color-warning-800: #9a3412;
+  --color-warning-900: #7c2d12;
+
+  /* --- 2. Typography (UI Kit) --- */
+  /* H1 / Page title / Bold */
+  --font-size-h1: 1.5rem;
+  --font-size-h2: 1.25rem;
+  --font-size-body: 0.875rem;
+  --font-size-details: 0.75rem;
+  --line-height-h1: 2rem;
+  --line-height-h2: 1.75rem;
+  --line-height-body: 1.25rem;
+  --line-height-details: 1rem;
+
+  /* --- 3. 간격 (Spacing) --- */
+  --spacing-0: 0px;
+  --spacing-1: 2px;
+  --spacing-2: 4px;
+  --spacing-3: 8px;
+  --spacing-4: 12px;
+  --spacing-5: 16px;
+  --spacing-6: 20px;
+  --spacing-7: 24px;
+  --spacing-8: 32px;
+  --spacing-9: 40px;
+  --spacing-10: 48px;
+  --spacing-11: 56px;
+  --spacing-12: 64px;
+
+  /* --- 4. 테두리 반경 --- */
+  --radius-0: 0px;
+  --radius-1: 2px;
+  --radius-2: 4px;
+  --radius-3: 6px;
+  --radius-4: 8px;
+  --radius-5: 12px;
+
+  /* --- 5. 폰트 굵기 --- */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* --- 6. 선 굵기 --- */
+  --border-width-0: 0px;
+  --border-width-1: 1px;
+  --border-width-2: 2px;
+  --border-width-4: 4px;
+  --outline-width-0: 0px;
+  --outline-width-1: 1px;
+  --outline-width-2: 2px;
+  --outline-width-4: 4px;
+
+  /* --- proxy theme --- */
+  /* boxShadow */
+  --shadow-lv1: 0px 1px 2px 0px rgba(16, 16, 16, 0.05);
+  --shadow-lv2: 0px 1px 3px 0px rgba(0, 0, 0, 0.1), 0px 1px 2px 0px rgba(0, 0, 0, 0.06);
+  --shadow-lv3: 0px 4px 6px -1px rgba(0, 0, 0, 0.1), 0px 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lv4: 0px 4px 6px -2px rgba(0, 0, 0, 0.05), 0px 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+  /* Font size scale (tailwindPlugin pxToRem) */
+  --text-10: 0.625rem;
+  --text-12: 0.75rem;
+  --text-14: 0.875rem;
+  --text-16: 1rem;
+  --text-20: 1.25rem;
+  --text-24: 1.5rem;
+  --text-32: 2rem;
+  --text-36: 2.25rem;
+
+  /* Line height scale */
+  --leading-18: 1.125rem;
+  --leading-20: 1.25rem;
+  --leading-22: 1.375rem;
+  --leading-24: 1.5rem;
+  --leading-28: 1.75rem;
+  --leading-30: 1.875rem;
+  --leading-32: 2rem;
+  --leading-54: 3.375rem;
+}
+
+/* ============================================
+   proxy theme - CSS 변수 (:root / data-theme)
+   ============================================ */
+:root {
+  /* 기본 primary (light와 동일, data-theme 없을 때 사용) */
+  --primary-lighter: #cccafc;
+  --primary-light: #7671f7;
+  --primary-normal: #5a54f5;
+  --primary-dark: #3f3bac;
+  --primary-darkset: #363293;
+  --primary-color: #ffffff;
+  --primary-inverse: #ffffff;
+  --primary-inverse-var: #5a54f5;
+  --menu-active: #5a54f5;
+
+  --secondary-light: #74777f;
+  --secondary-normal: #44474e;
+  --secondary-dark: #2d3038;
+  --secondary-sec-var: #a9abb4;
+  --secondary-sec-var2: #ffffff;
+  --secondary-sec-var3: #44474e;
+  --secondary-sec-var4: #f4f5f7;
+
+  --tertiary-normal: #d7373f;
+  --tertiary-dark: #832226;
+
+  --menu-icon: #8e9099;
+  --menu-bg: #ffffff;
+  --menu-font: #363293;
+  --menu-hover: #e0e2ec;
+
+  --input-box: #ffffff;
+  --input-disable: #f1f2f3;
+  --input-stroke: #c4c6d0;
+  --input-hover: #eaeafe;
+
+  --table-normal: #f1f2f3;
+  --table-hover: #f1f1fe;
+
+  --model-enabled: #e4e5e6;
+  --model-enabled-var: #ffffff;
+  --model-hover: #f0f0ff;
+
+  --contents-light: #a9abb4;
+  --contents-normal: #74777f;
+  --contents-normal-var: #ffffff;
+  --contents-dark: #eaeafe;
+  --contents-dark-var: #ffffff;
+
+  --pannel-bright: #ffffff;
+  --pannel-normal: #f2f3f4;
+
+  --transparency-pri: #363293;
+  --transparency-inverse: #181c2212;
+  --transparency-normal: #181c221a;
+  --transparency-dark: #181c2299;
+
+  --stroke-light: #74777f;
+  --stroke-normal: #c4c6d0;
+  --stroke-dark: #e0e2ec;
+  --stroke-darker: #e0e2ec;
+  --stroke-hover: #5a54f5;
+
+  --font-high: #44474e;
+  --font-normal: #5b5e66;
+  --font-low: #74777f;
+  --font-light: #8e9099;
+  --font-dark: #2d3038;
+
+  --bg-light: #ffffff;
+  --bg-normal: #f6f7f8;
+  --bg-dark: #7e8493;
+
+  --fixed-disable: #f4f5f7;
+  --fixed-inverse: #181c22;
+  --fixed-hit-box: #ffffff;
+  --fixed-white-fixed: #ffffff;
+  --fixed-white-gray-fixed: #e0e2ec;
+  --fixed-bright-gray-fixed: #5b5e66;
+  --fixed-gray-fixed: #44474e;
+  --fixed-dark-gray-fixed: #2d3038;
+  --fixed-black-fixed: #181c22;
+  --fixed-success: #32d74b;
+  --fixed-fail: #d7373f;
+
+  --etc-purple-pastel: #cabbeb;
+  --etc-purple-pastel-dim: #9480dd;
+  --etc-blue-pastel: #ace3fc;
+  --etc-blue-pastel-dim: #719dfe;
+  --etc-yellow-pastel: #f8efa7;
+  --etc-yellow-pastel-dim: #f4d04f;
+  --etc-cyan-pastel: #8ce6d6;
+  --etc-cyan-pastel-dim: #1fccbc;
+
+  --system-message-info-bg: #f3f8fe;
+  --system-message-error-bg: #fef5f4;
+  --system-message-warning-bg: #fffde9;
+  --system-message-help-bg: #faf6fe;
+  --system-message-info: #348ff4;
+  --system-message-error: #ea3829;
+  --system-message-warning: #e4c200;
+  --system-message-help: #9d57f3;
+
+  --btn-ghost-hover: #f4f5f7;
+  --btn-ghost-hover-var: #5a54f5;
+  --btn-ghost-active: #f4f5f7;
+  --btn-ghost-enabled: #ffffff;
+}
+
+/* light / dark 공통 primary */
+html[data-theme="light"],
+html[data-theme="dark"] {
+  --primary-lighter: #cccafc;
+  --primary-light: #7671f7;
+  --primary-normal: #5a54f5;
+  --primary-dark: #3f3bac;
+  --primary-darkset: #363293;
+  --primary-color: #ffffff;
+  --menu-active: #5a54f5;
+}
+
+html[data-theme="light"] {
+  --primary-inverse: #ffffff;
+  --primary-inverse-var: #5a54f5;
+}
+
+html[data-theme="dark"] {
+  --primary-inverse: #5a54f5;
+  --primary-inverse-var: #ffffff;
+}
+
+/* pink / green 테마 (필요 시 사용) */
+html[data-theme="pink"],
+html[data-theme="pink-dark"] {
+  --primary-lighter: #fccaec;
+  --primary-light: #f67ab0;
+  --primary-normal: #fa599f;
+  --primary-dark: #b03b6e;
+  --primary-darkset: #92355d;
+  --primary-color: #ffffff;
+  --menu-active: #fa599f;
+}
+
+html[data-theme="pink"] {
+  --primary-inverse: #ffffff;
+  --primary-inverse-var: #fa599f;
+}
+
+html[data-theme="pink-dark"] {
+  --primary-inverse: #fa599f;
+  --primary-inverse-var: #ffffff;
+}
+
+html[data-theme="green"],
+html[data-theme="green-dark"] {
+  --primary-lighter: #bdfed1;
+  --primary-light: #89fd9d;
+  --primary-normal: #2ab825;
+  --primary-dark: #319731;
+  --primary-darkset: #157615;
+  --primary-color: #ffffff;
+  --menu-active: #2ab825;
+}
+
+html[data-theme="green"] {
+  --primary-inverse: #ffffff;
+  --primary-inverse-var: #2ab825;
+}
+
+html[data-theme="green-dark"] {
+  --primary-inverse: #2ab825;
+  --primary-inverse-var: #ffffff;
+}
+
+/* dark 테마 변수 오버라이드 */
+html[data-theme="dark"],
+html[data-theme="green-dark"],
+html[data-theme="pink-dark"] {
+  --secondary-sec-var: #8e9099;
+  --secondary-sec-var2: #44474e;
+  --secondary-sec-var3: #5b5e66;
+  --secondary-sec-var4: #2d3038;
+
+  --menu-icon: #c4c6d0;
+  --menu-bg: #2d3038;
+  --menu-font: #ffffff;
+  --menu-hover: #383a42;
+
+  --input-box: #27292e;
+  --input-disable: #383a42;
+  --input-stroke: #5b5e66;
+  --input-hover: #383a42;
+
+  --table-normal: #383a42;
+  --table-hover: #27292e;
+
+  --model-enabled: #2d3038;
+  --model-enabled-var: #2d3038;
+  --model-hover: #2d3038;
+
+  --contents-light: #8e9099;
+  --contents-normal: #44474e;
+  --contents-normal-var: #44474e;
+  --contents-dark: #5b5e66;
+  --contents-dark-var: #5b5e66;
+
+  --pannel-bright: #383a42;
+  --pannel-normal: #2d3038;
+
+  --transparency-pri: #cccafc1f;
+  --transparency-inverse: #ffffff24;
+  --transparency-normal: #181c224d;
+  --transparency-dark: #181c2299;
+
+  --stroke-light: #e0e2ec;
+  --stroke-normal: #8e9099;
+  --stroke-dark: #2d3038;
+  --stroke-darker: #181c22;
+  --stroke-hover: #2d3038;
+
+  --font-high: #ffffff;
+  --font-normal: #c4c6d0;
+  --font-low: #c4c6d0;
+  --font-light: #8e9099;
+  --font-dark: #2d3038;
+
+  --bg-light: #181c22;
+  --bg-normal: #181c22;
+  --bg-dark: #181c22;
+
+  --fixed-disable: #44474e;
+  --fixed-inverse: #ffffff;
+
+  --system-message-info-bg: #374457;
+  --system-message-error-bg: #4d3a3f;
+  --system-message-warning-bg: #44443d;
+  --system-message-help-bg: #443d57;
+
+  --btn-ghost-hover: #44474e;
+  --btn-ghost-hover-var: #44474e;
+  --btn-ghost-active: #44474e;
+  --btn-ghost-enabled: #ffffff;
+}
+
+/* proxy tailwind.config colors → Tailwind v4 유틸리티 (inline으로 CSS 변수 참조) */
+@theme inline {
+  --color-primary-light: var(--primary-light);
+  --color-primary-lighter: var(--primary-lighter);
+  --color-primary-normal: var(--primary-normal);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-darkset: var(--primary-darkset);
+  --color-primary-color: var(--primary-color);
+  --color-primary-inverse: var(--primary-inverse);
+  --color-primary-inverse-var: var(--primary-inverse-var);
+
+  --color-secondary-light: var(--secondary-light);
+  --color-secondary-normal: var(--secondary-normal);
+  --color-secondary-dark: var(--secondary-dark);
+  --color-secondary-sec-var: var(--secondary-sec-var);
+  --color-secondary-sec-var2: var(--secondary-sec-var2);
+  --color-secondary-sec-var3: var(--secondary-sec-var3);
+  --color-secondary-sec-var4: var(--secondary-sec-var4);
+
+  --color-tertiary-normal: var(--tertiary-normal);
+  --color-tertiary-dark: var(--tertiary-dark);
+
+  --color-menu-icon: var(--menu-icon);
+  --color-menu-bg: var(--menu-bg);
+  --color-menu-font: var(--menu-font);
+  --color-menu-hover: var(--menu-hover);
+  --color-menu-active: var(--menu-active);
+
+  --color-input-box: var(--input-box);
+  --color-input-disable: var(--input-disable);
+  --color-input-stroke: var(--input-stroke);
+  --color-input-hover: var(--input-hover);
+
+  --color-table-normal: var(--table-normal);
+  --color-table-hover: var(--table-hover);
+
+  --color-model-enabled: var(--model-enabled);
+  --color-model-enabled-var: var(--model-enabled-var);
+  --color-model-hover: var(--model-hover);
+
+  --color-contents-light: var(--contents-light);
+  --color-contents-normal: var(--contents-normal);
+  --color-contents-normal-var: var(--contents-normal-var);
+  --color-contents-dark: var(--contents-dark);
+  --color-contents-dark-var: var(--contents-dark-var);
+
+  --color-pannel-normal: var(--pannel-normal);
+  --color-pannel-bright: var(--pannel-bright);
+
+  --color-transparency-pri: var(--transparency-pri);
+  --color-transparency-inverse: var(--transparency-inverse);
+  --color-transparency-normal: var(--transparency-normal);
+  --color-transparency-dark: var(--transparency-dark);
+
+  --color-stroke-light: var(--stroke-light);
+  --color-stroke-normal: var(--stroke-normal);
+  --color-stroke-dark: var(--stroke-dark);
+  --color-stroke-darker: var(--stroke-darker);
+  --color-stroke-hover: var(--stroke-hover);
+
+  --color-font-high: var(--font-high);
+  --color-font-normal: var(--font-normal);
+  --color-font-low: var(--font-low);
+  --color-font-light: var(--font-light);
+  --color-font-dark: var(--font-dark);
+
+  --color-bg-normal: var(--bg-normal);
+  --color-bg-light: var(--bg-light);
+  --color-bg-dark: var(--bg-dark);
+
+  --color-fixed-disable: var(--fixed-disable);
+  --color-fixed-inverse: var(--fixed-inverse);
+  --color-fixed-success: var(--fixed-success);
+  --color-fixed-fail: var(--fixed-fail);
+  --color-fixed-hit-box: var(--fixed-hit-box);
+  --color-fixed-white-fixed: var(--fixed-white-fixed);
+  --color-fixed-white-gray-fixed: var(--fixed-white-gray-fixed);
+  --color-fixed-bright-gray-fixed: var(--fixed-bright-gray-fixed);
+  --color-fixed-gray-fixed: var(--fixed-gray-fixed);
+  --color-fixed-dark-gray-fixed: var(--fixed-dark-gray-fixed);
+  --color-fixed-black-fixed: var(--fixed-black-fixed);
+
+  --color-etc-purple-pastel: var(--etc-purple-pastel);
+  --color-etc-purple-pastel-dim: var(--etc-purple-pastel-dim);
+  --color-etc-blue-pastel: var(--etc-blue-pastel);
+  --color-etc-blue-pastel-dim: var(--etc-blue-pastel-dim);
+  --color-etc-yellow-pastel: var(--etc-yellow-pastel);
+  --color-etc-yellow-pastel-dim: var(--etc-yellow-pastel-dim);
+  --color-etc-cyan-pastel: var(--etc-cyan-pastel);
+  --color-etc-cyan-pastel-dim: var(--etc-cyan-pastel-dim);
+
+  --color-system-message-info-bg: var(--system-message-info-bg);
+  --color-system-message-error-bg: var(--system-message-error-bg);
+  --color-system-message-warning-bg: var(--system-message-warning-bg);
+  --color-system-message-help-bg: var(--system-message-help-bg);
+  --color-system-message-info: var(--system-message-info);
+  --color-system-message-error: var(--system-message-error);
+  --color-system-message-warning: var(--system-message-warning);
+  --color-system-message-help: var(--system-message-help);
+
+  --color-btn-ghost-hover: var(--btn-ghost-hover);
+  --color-btn-ghost-hover-var: var(--btn-ghost-hover-var);
+  --color-btn-ghost-active: var(--btn-ghost-active);
+  --color-btn-ghost-enabled: var(--btn-ghost-enabled);
+}
+
+/* --- 7. Typography 유틸 클래스 (UI Kit) --- */
+@layer components {
+  .text-h1 {
+    font-size: var(--font-size-h1);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-h1);
+    color: var(--color-neutral-900);
+  }
+  .text-h2 {
+    font-size: var(--font-size-h2);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-h2);
+    color: var(--color-neutral-900);
+  }
+  .text-body {
+    font-size: var(--font-size-body);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-body);
+    color: var(--color-neutral-900);
+  }
+  .text-details {
+    font-size: var(--font-size-details);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-details);
+    color: var(--color-neutral-600);
+  }
+
+  .custom-card {
+    @apply rounded-4 border border-neutral-200 bg-white p-5 shadow-sm;
+  }
+
+  /* --- proxy tailwindPlugin 호환 (font-size-*, line-height-*) --- */
+  .font-size-10 {
+    @apply text-10;
+  }
+  .font-size-12 {
+    @apply text-12;
+  }
+  .font-size-14 {
+    @apply text-14;
+  }
+  .font-size-16 {
+    @apply text-16;
+  }
+  .font-size-20 {
+    @apply text-20;
+  }
+  .font-size-24 {
+    @apply text-24;
+  }
+  .font-size-32 {
+    @apply text-32;
+  }
+  .font-size-36 {
+    @apply text-36;
+  }
+
+  .line-height-18 {
+    @apply leading-18;
+  }
+  .line-height-20 {
+    @apply leading-20;
+  }
+  .line-height-22 {
+    @apply leading-22;
+  }
+  .line-height-24 {
+    @apply leading-24;
+  }
+  .line-height-28 {
+    @apply leading-28;
+  }
+  .line-height-30 {
+    @apply leading-30;
+  }
+  .line-height-32 {
+    @apply leading-32;
+  }
+  .line-height-54 {
+    @apply leading-54;
+  }
+
+  /* proxy typo (tailwindPlugin) */
+  .typo-t1 {
+    @apply text-36 leading-54 font-bold;
+  }
+  .typo-h1 {
+    @apply text-32 leading-32 font-semibold;
+  }
+  .typo-h2 {
+    @apply text-24 leading-32 font-semibold;
+  }
+  .typo-h3-bold {
+    @apply text-20 leading-28 font-semibold;
+  }
+  .typo-h3-regualr {
+    @apply text-20 leading-30 font-normal;
+  }
+  .typo-h4-bold {
+    @apply text-16 leading-24 font-bold;
+  }
+  .typo-h4-regular {
+    @apply text-16 leading-24 font-normal;
+  }
+  .typo-body-bold {
+    @apply text-14 leading-22 font-semibold;
+  }
+  .typo-body-regular {
+    @apply text-14 leading-22 font-normal;
+  }
+  .typo-label {
+    @apply text-12 leading-20 font-normal;
+  }
+  .typo-label2 {
+    @apply text-10 leading-18 font-normal;
+  }
+  .typo-label-line {
+    @apply text-12 leading-20 font-normal;
+  }
+  /* tailwindPlugin proxy 모달용 (동일 스케일) */
+  .typo-heading-1 {
+    @apply text-20 leading-28 font-semibold;
+  }
+  .typo-body-2-normal {
+    @apply text-14 leading-20 font-normal;
+  }
+
+  /* proxy (공통 레이아웃) */
+  .proxy-center {
+    @apply flex items-center justify-center;
+  }
+  .proxy-between {
+    @apply flex items-center justify-between;
+  }
+  .proxy-modal-container {
+    @apply flex flex-col gap-8 p-7;
+  }
+}

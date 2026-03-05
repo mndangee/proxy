@@ -1,0 +1,164 @@
+[
+  {
+    "name": "@electron-toolkit/eslint-config-prettier",
+    "version": "^3.0.0",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-toolkit.git"
+  },
+  {
+    "name": "@electron-toolkit/eslint-config-ts",
+    "version": "^3.1.0",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-toolkit.git"
+  },
+  {
+    "name": "@electron-toolkit/preload",
+    "version": "^3.0.2",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-toolkit.git"
+  },
+  {
+    "name": "@electron-toolkit/tsconfig",
+    "version": "^2.0.0",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-toolkit.git"
+  },
+  {
+    "name": "@electron-toolkit/utils",
+    "version": "^4.0.0",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-toolkit.git"
+  },
+  {
+    "name": "@tailwindcss/vite",
+    "version": "^4.2.1",
+    "license": "MIT",
+    "repository": "https://github.com/tailwindlabs/tailwindcss.git"
+  },
+  {
+    "name": "@types/node",
+    "version": "^22.19.1",
+    "license": "MIT",
+    "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+  },
+  {
+    "name": "@types/react",
+    "version": "^19.2.7",
+    "license": "MIT",
+    "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+  },
+  {
+    "name": "@types/react-dom",
+    "version": "^19.2.3",
+    "license": "MIT",
+    "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+  },
+  {
+    "name": "@vitejs/plugin-react",
+    "version": "^5.1.1",
+    "license": "MIT",
+    "repository": "git+https://github.com/vitejs/vite-plugin-react.git"
+  },
+  {
+    "name": "autoprefixer",
+    "version": "^10.4.24",
+    "license": "MIT",
+    "repository": "postcss/autoprefixer"
+  },
+  {
+    "name": "electron",
+    "version": "^39.2.6",
+    "license": "MIT",
+    "repository": "https://github.com/electron/electron"
+  },
+  {
+    "name": "electron-builder",
+    "version": "^26.0.12",
+    "license": "MIT",
+    "repository": "git+https://github.com/electron-userland/electron-builder.git"
+  },
+  {
+    "name": "electron-updater",
+    "version": "^6.3.9",
+    "license": "MIT",
+    "repository": "git+https://github.com/electron-userland/electron-builder.git"
+  },
+  {
+    "name": "electron-vite",
+    "version": "^5.0.0",
+    "license": "MIT",
+    "repository": "git+https://github.com/alex8088/electron-vite.git"
+  },
+  {
+    "name": "eslint",
+    "version": "^9.39.1",
+    "license": "MIT",
+    "repository": "eslint/eslint"
+  },
+  {
+    "name": "eslint-plugin-react",
+    "version": "^7.37.5",
+    "license": "MIT",
+    "repository": "https://github.com/jsx-eslint/eslint-plugin-react"
+  },
+  {
+    "name": "eslint-plugin-react-hooks",
+    "version": "^7.0.1",
+    "license": "MIT",
+    "repository": "https://github.com/facebook/react.git"
+  },
+  {
+    "name": "eslint-plugin-react-refresh",
+    "version": "^0.4.24",
+    "license": "MIT",
+    "repository": "github:ArnaudBarre/eslint-plugin-react-refresh"
+  },
+  {
+    "name": "postcss",
+    "version": "^8.5.6",
+    "license": "MIT",
+    "repository": "postcss/postcss"
+  },
+  {
+    "name": "prettier",
+    "version": "^3.7.4",
+    "license": "MIT",
+    "repository": "prettier/prettier"
+  },
+  {
+    "name": "prettier-plugin-tailwindcss",
+    "version": "^0.7.2",
+    "license": "MIT",
+    "repository": "https://github.com/tailwindlabs/prettier-plugin-tailwindcss"
+  },
+  {
+    "name": "react",
+    "version": "^18.3.1",
+    "license": "MIT",
+    "repository": "https://github.com/facebook/react.git"
+  },
+  {
+    "name": "react-dom",
+    "version": "^18.3.1",
+    "license": "MIT",
+    "repository": "https://github.com/facebook/react.git"
+  },
+  {
+    "name": "tailwindcss",
+    "version": "^4.1.18",
+    "license": "MIT",
+    "repository": "https://github.com/tailwindlabs/tailwindcss.git"
+  },
+  {
+    "name": "typescript",
+    "version": "^5.9.3",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/microsoft/TypeScript.git"
+  },
+  {
+    "name": "vite",
+    "version": "^7.2.6",
+    "license": "MIT",
+    "repository": "git+https://github.com/vitejs/vite.git"
+  }
+]
