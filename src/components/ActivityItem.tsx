@@ -24,10 +24,10 @@ export function ActivityListItem({ message, apiPath, timeAgo }: ActivityListItem
   return (
     <li className="flex items-center justify-between py-4">
       <div>
-        <p className="text-body font-medium text-neutral-900">{message}</p>
-        <p className="text-details text-neutral-500">{apiPath}</p>
+        <p className="typo-body-2-normal font-medium text-label-normal">{message}</p>
+        <p className="typo-caption-1 text-label-assistant">{apiPath}</p>
       </div>
-      <span className="text-details text-neutral-400">{timeAgo}</span>
+      <span className="typo-caption-1 text-label-assistant">{timeAgo}</span>
     </li>
   )
 }

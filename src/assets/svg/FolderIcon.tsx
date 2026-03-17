@@ -1,0 +1,18 @@
+export default function FolderIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      width="68"
+      height="64"
+      viewBox="0 0 68 64"
+      fill="none"
+    >
+      <rect width="68" height="64" rx="32" fill="#CCDDFF" />
+      <path
+        d="M36 36H38V34H40V32H38V30H36V32H34V34H36V36V36M26 40C25.45 40 24.9792 39.8042 24.5875 39.4125C24.1958 39.0208 24 38.55 24 38V26C24 25.45 24.1958 24.9792 24.5875 24.5875C24.9792 24.1958 25.45 24 26 24H32L34 26H42C42.55 26 43.0208 26.1958 43.4125 26.5875C43.8042 26.9792 44 27.45 44 28V38C44 38.55 43.8042 39.0208 43.4125 39.4125C43.0208 39.8042 42.55 40 42 40H26V40M26 38H42V38V38V28V28V28H33.175L31.175 26H26V26V26V38V38V38V38M26 38V38V38V26V26V26V26V28V28V28V28V38V38V38V38V38"
+        fill="#0057FF"
+      />
+    </svg>
+  );
+}

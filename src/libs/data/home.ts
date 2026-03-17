@@ -9,11 +9,13 @@ export function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, '')
 }
 
-/** slug로 프로젝트 찾기 (없으면 첫 번째 프로젝트) */
+/** slug 또는 projectName(URL 디코딩)으로 프로젝트 찾기 (없으면 첫 번째 프로젝트) */
 export function getProjectBySlug(slug: string | null): Project {
   if (!slug) return mockProjects[0]
-  const found = mockProjects.find((p) => slugify(p.name) === slug)
-  return found ?? mockProjects[0]
+  const decoded = decodeURIComponent(slug)
+  const foundBySlug = mockProjects.find((p) => slugify(p.name) === slug)
+  const foundByName = mockProjects.find((p) => p.name === decoded)
+  return foundBySlug ?? foundByName ?? mockProjects[0]
 }
 
 export const mockProjects: Project[] = [

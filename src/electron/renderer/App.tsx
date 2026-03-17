@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import RootLayout from '../../app/layout'
 import HomePage from '../../app/page'
+import DesignSystemPage from '../../app/design-system/page'
 import LicensesPage from '../../app/licenses/page'
 import ProjectPage from '../../app/project/page'
 
@@ -73,7 +74,9 @@ function App(): React.JSX.Element {
 
   let Page: React.ComponentType<any> = HomePage
   let pageProps: Record<string, unknown> = {}
-  if (route === 'licenses') {
+  if (route === 'design-system') {
+    Page = DesignSystemPage
+  } else if (route === 'licenses') {
     Page = LicensesPage
   } else if (projectMatch) {
     Page = ProjectPage

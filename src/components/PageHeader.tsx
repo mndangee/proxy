@@ -43,16 +43,16 @@ export default function PageHeader({
     <header className="mb-6 flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
         {tabs != null && tabs.length > 0 && (
-          <div className="mb-3 flex gap-2 border-b border-neutral-200">
+          <div className="mb-3 flex gap-2 border-b border-border-enabled">
             {tabs.map((tab) => (
               <button
                 key={tab.value}
                 type="button"
                 onClick={() => onTabChange?.(tab.value)}
-                className={`border-b-2 pb-3 text-body font-medium transition-colors ${
+                className={`typo-body-2-normal border-b-2 pb-3 font-medium transition-colors ${
                   activeTab === tab.value
-                    ? 'border-brand-600 text-brand-600'
-                    : 'border-transparent text-neutral-500 hover:text-neutral-700'
+                    ? 'border-blue-600 text-blue-600'
+                    : 'border-transparent text-label-assistant hover:text-label-neutral'
                 }`}
               >
                 {tab.label}
@@ -61,16 +61,16 @@ export default function PageHeader({
           </div>
         )}
         {badge != null && badge !== '' && (
-          <p className="text-details mb-1 font-medium uppercase tracking-wide text-neutral-500">
+          <p className="typo-caption-1 mb-1 font-medium uppercase tracking-wide text-label-assistant">
             {badge}
           </p>
         )}
         {subtitle != null && subtitle !== '' && (
-          <p className="text-h1 mb-0.5 text-neutral-900">{subtitle}</p>
+          <p className="typo-title-3 mb-0.5 text-label-normal">{subtitle}</p>
         )}
-        <h1 className="text-h2 font-bold text-neutral-900">{title}</h1>
+        <h1 className="typo-heading-1 font-bold text-label-normal">{title}</h1>
         {description != null && description !== '' && (
-          <p className="text-body mt-1 text-neutral-600">{description}</p>
+          <p className="typo-body-2-normal mt-1 text-label-assistant">{description}</p>
         )}
       </div>
       {action != null && (
@@ -79,9 +79,9 @@ export default function PageHeader({
             <button
               type="button"
               onClick={(action as PageHeaderAction).onClick}
-              className="flex items-center gap-2 rounded-4 bg-brand-600 px-4 py-3 text-body font-medium text-white hover:bg-brand-700"
+              className="typo-body-2-normal flex items-center gap-2 rounded-4 bg-background-primary px-4 py-3 font-medium text-label-common hover:bg-background-primary-hover"
             >
-              <span className="text-h2 leading-none">+</span>
+              <span className="typo-heading-1 leading-none">+</span>
               {(action as PageHeaderAction).label}
             </button>
           ) : (

@@ -124,8 +124,27 @@ API_URL=http://localhost:3000
 
 ### 사전 요구 사항
 
-- Node.js 20.x 이상 권장 (Tailwind v4, Vite 7 호환)
+- Node.js 20.x 이상 권장 (Tailwind v4, Vite 7 호환). 이 프로젝트는 **Node 24**를 기준으로 합니다 (`.nvmrc` 참고).
+- [nvm](https://github.com/nvm-sh/nvm) 사용 시: 저장소 루트에서 `nvm use`를 실행하면 `.nvmrc`에 지정된 버전(24)이 적용됩니다.
 - npm 9.x 이상
+
+### Node를 찾지 못할 때 (`env: node: No such file or directory`)
+
+터미널에서 `nvm use` 후에도 `npm run dev` 실행 시 위 오류가 나면, **npm을 거치지 않고** nvm을 로드한 뒤 실행하는 스크립트를 사용하세요.
+
+```sh
+# 개발 서버 실행 (권장)
+./dev
+```
+
+또는
+
+```sh
+bash scripts/dev.sh
+```
+
+- `scripts/dev.sh`는 nvm을 로드하고 `.nvmrc` 버전을 적용한 뒤 `electron-vite dev`를 실행합니다.
+- `npm` 명령이 PATH에서 `node`를 찾지 못하는 환경(예: nvm 미로드 셸)에서도 동작합니다.
 
 ### 초기 세팅
 
@@ -154,6 +173,9 @@ API_URL=http://localhost:3000
 ```sh
 npm run dev
 ```
+
+- Node가 PATH에 정상적으로 있는 환경에서는 위 명령으로 실행합니다.
+- `env: node: No such file or directory` 오류가 나면 **`./dev`** 또는 **`bash scripts/dev.sh`** 를 사용하세요 (위 “Node를 찾지 못할 때” 참고).
 
 - Electron 창이 열리며 개발 서버와 연동됩니다.
 - 라이선스 페이지: 앱 하단 푸터의 "Open Source Licenses" 링크 또는 `#licenses` 해시로 이동합니다.

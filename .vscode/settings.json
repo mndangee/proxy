@@ -1,0 +1,21 @@
+{
+  "terminal.integrated.defaultProfile.osx": "nvm (Node 24)",
+  "terminal.integrated.profiles.osx": {
+    "nvm (Node 24)": {
+      "path": "zsh",
+      "args": [
+        "-l",
+        "-c",
+        "source \"$HOME/.nvm/nvm.sh\" 2>/dev/null && nvm use 2>/dev/null; exec zsh -l"
+      ]
+    }
+  },
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+  "tailwindCSS.validate": false,
+  "tailwindCSS.files.exclude": ["**/src/styles/globals.css"],
+  "tailwindCSS.experimental.configFile": "src/styles/globals.css",
+  "tailwindCSS.includeLanguages": {
+    "css": "css"
+  }
+}
