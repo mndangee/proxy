@@ -41,7 +41,7 @@ export default function HistoryList(props: IHistoryListProps) {
   return (
     <div className="bg-background-white rounded-5 mt-9 w-full max-w-[1600px] items-center overflow-hidden border-1 border-gray-200">
       {isLoading && <Loader />}
-      <div className="typo-title-3 bg-gray-100 px-8 py-6 font-bold">최근 히스토리</div>
+      <div className="typo-title-3 bg-gray-50 px-8 py-6 font-bold">최근 히스토리</div>
       {historyList.length > 0 ? (
         <>
           {historyList.map((data) => (

@@ -3,6 +3,7 @@ type BtnCategoryType = "primary" | "secondary";
 type BtnSizeType = "large" | "medium" | "small";
 
 export interface IButtonProps {
+  className?: string;
   /** 버튼 내용(텍스트) */
   children: React.ReactNode;
   /** 버튼 카테고리, 디자인 시스템(피그마 컨벤션) */
@@ -16,7 +17,7 @@ export interface IButtonProps {
   /** 버튼 오른쪽 아이콘 */
   endIcon?: React.ReactNode;
   /** 버튼 가로 길이 */
-  width?: `${number}${WidthUnitType}` | number;
+  width?: `${number}${WidthUnitType}` | number | "auto";
   /** 비활성 여부 */
   disabled?: boolean;
   /** 버튼 클릭 시 이벤트 동작 */
@@ -44,7 +45,7 @@ export default function Btn({ category = "primary", size = "medium", ...props }:
 
   return (
     <button
-      className={` ${props.variant ? variantCategory[category] : btnCategory[category]} ${btnSize[size]} cn-center rounded-3 cursor-pointer font-medium disabled:cursor-no-drop disabled:opacity-50`}
+      className={`${props.variant ? variantCategory[category] : btnCategory[category]} ${btnSize[size]} ${props.className ?? ""} cn-center rounded-3 cursor-pointer font-medium disabled:cursor-no-drop disabled:opacity-50`}
       style={{ width: btnWidth }}
       onClick={props.onClick}
       disabled={props.disabled}

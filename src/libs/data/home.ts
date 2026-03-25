@@ -1,4 +1,4 @@
-import type { Project, Activity } from '../../types'
+import type { Project, Activity } from '@/types'
 
 /** 프로젝트 이름 → URL path용 slug (예: "E-commerce Mock" → "e-commerce-mock") */
 export function slugify(name: string): string {
