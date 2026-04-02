@@ -2,6 +2,7 @@
 
 // React
 import { useState } from "react";
+
 import TextareaAutosizeProps from "react-textarea-autosize";
 
 type WidthUnitType = "px" | "%" | "em" | "vh";
@@ -52,19 +53,11 @@ export default function TextArea({ size = "medium", ...args }: ITextAreaProps) {
 
   return (
     <div
-      className={`
-      ${isFocus && "outline-2 outline-border-primary"}
-      ${props.error && "!outline-border-negative"}
-      ${props.disabled ? "!outline-border-week placeholder:text-label-disabled" : "hover:outline-border-primary"} 
-      flex w-full  items-center gap-3 overflow-hidden rounded-4 outline outline-1 outline-border-enabled
-    `}
+      className={` ${isFocus && "outline-border-primary outline-2"} ${props.error && "!outline-border-negative"} ${props.disabled ? "!outline-border-week placeholder:text-label-disabled" : "hover:outline-border-primary"} rounded-4 outline-border-enabled flex w-full items-center gap-3 overflow-hidden outline outline-1`}
       style={{ width: inputWidth }}
     >
       <TextareaAutosizeProps
-        className={`
-              ${textareaType[size]} w-full
-              resize-none !bg-background-white outline-none placeholder:text-label-assistant
-            `}
+        className={` ${textareaType[size]} !bg-background-white placeholder:text-label-assistant w-full resize-none outline-none`}
         placeholder={props.placeholder}
         disabled={props.disabled}
         value={props.value}

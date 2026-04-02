@@ -4,7 +4,7 @@
 import FolderIcon from "@/assets/svg/FolderIcon";
 import PlusIcon from "@/assets/svg/PlusIcon";
 
-// Component
+// Components
 import Btn from "@/components/common/Btn";
 
 interface INoHistoryProps {

@@ -1,10 +1,10 @@
 "use client";
 
+// Components
+import CheckBox from "@/components/common/CheckBox";
+
 // Types
 import { ITableProps } from "@/types/commonType";
-
-//Component
-import CheckBox from "@/components/common/CheckBox";
 
 const defaultHeaderRowClass = "typo-body-bold bg-table-normal text-font-normal flex h-10 min-h-10 justify-center text-center";
 const defaultBodyRowClass =

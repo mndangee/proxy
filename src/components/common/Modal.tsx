@@ -1,7 +1,7 @@
 // Assets
 import CloseIcon from "@/assets/svg/CloseIcon";
 
-// Components
+// Internal
 import ModalPortal from "./ModalPortal";
 
 type ModalSizeType = "small" | "medium";
@@ -27,9 +27,7 @@ const modalSize: Record<ModalSizeType, string> = {
 const ModalContents = (props: ICommonModalProps) => (
   <>
     <div className="fixed top-0 left-0 h-full w-full bg-black opacity-70" onClick={props.onClose}></div>
-    <div
-      className={`${modalSize[props.size]} rounded-4 fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white`}
-    >
+    <div className={`${modalSize[props.size]} rounded-4 fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white`}>
       {props.children}
       {props.showCloseBtn && (
         <div className="absolute top-6 right-6 cursor-pointer" onClick={props.onClose}>

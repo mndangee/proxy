@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 // Assets
 import HistoryIcon from "@/assets/svg/HistoryIcon";
 
-//Component
+// Components
 import Loader from "@/components/common/Loader";
 import MethodTag from "@/components/common/MethodTag";
 

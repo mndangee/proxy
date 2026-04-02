@@ -25,9 +25,7 @@ export default function ProjectTab() {
             }`}
           >
             {tab.label}
-            {activeTab === tab.value && (
-              <span className="absolute right-0 bottom-0 left-0 h-0.5 bg-blue-500" aria-hidden />
-            )}
+            {activeTab === tab.value && <span className="absolute right-0 bottom-0 left-0 h-0.5 bg-blue-500" aria-hidden />}
           </div>
         ))}
       </div>

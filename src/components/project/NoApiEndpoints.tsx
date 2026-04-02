@@ -4,7 +4,7 @@
 import PlusIcon from "@/assets/svg/PlusIcon";
 import ApiIcon from "@/assets/svg/ApiIcon";
 
-// Component
+// Components
 import Btn from "@/components/common/Btn";
 
 export default function NoApiEndpoints() {

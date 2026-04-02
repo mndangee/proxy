@@ -1,8 +1,13 @@
+// React
 import type { ReactNode } from "react";
 import { useState } from "react";
-import PlusIcon from "../../assets/svg/PlusIcon";
-import SearchIcon from "../../assets/svg/SearchIcon";
-import Btn from "../common/Btn";
+
+// Assets
+import PlusIcon from "@/assets/svg/PlusIcon";
+import SearchIcon from "@/assets/svg/SearchIcon";
+
+// Components
+import Btn from "@/components/common/Btn";
 
 export type HeaderVariant = "main" | "sub";
 
