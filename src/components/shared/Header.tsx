@@ -1,8 +1,13 @@
+// React
 import type { ReactNode } from "react";
 import { useState } from "react";
-import PlusIcon from "../../assets/svg/PlusIcon";
-import SearchIcon from "../../assets/svg/SearchIcon";
-import Btn from "../common/Btn";
+
+// Assets
+import PlusIcon from "@/assets/svg/PlusIcon";
+import SearchIcon from "@/assets/svg/SearchIcon";
+
+// Components
+import Btn from "@/components/common/Btn";
 
 export type HeaderVariant = "main" | "sub";
 
@@ -22,27 +27,16 @@ export default function Header({ className = "", variant = "sub", ...props }: He
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
 
-  const inner = (children: ReactNode) => (
-    <div className="mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-6">{children}</div>
-  );
+  const inner = (children: ReactNode) => <div className={`mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 px-6`}>{children}</div>;
 
   if (variant === "main") {
     return (
-      <div
-        className={`bg-background-white w-full py-7 ${className}`}
-        style={{ width: "100vw", marginLeft: "calc(-50vw + 50%)" }}
-      >
+      <div className={`bg-background-white w-full min-w-0 py-7 ${className}`}>
         {inner(
           <>
             <div className="typo-title-3 text-label-normal">{props.title}</div>
             {props.onCreateProject != null && (
-              <Btn
-                category="primary"
-                size="medium"
-                startIcon={<PlusIcon />}
-                onClick={props.onCreateProject}
-                width={240}
-              >
+              <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={props.onCreateProject} width={240}>
                 Create New Project
               </Btn>
             )}
@@ -53,18 +47,12 @@ export default function Header({ className = "", variant = "sub", ...props }: He
   }
 
   return (
-    <header
-      className={`bg-background-white w-full ${className}`}
-      style={{ width: "100vw", marginLeft: "calc(-50vw + 50%)" }}
-    >
+    <header className={`bg-background-white w-full min-w-0 py-6 ${className}`}>
       {inner(
         <>
-          <div className="min-w-0 flex-1">
-            <a
-              href="/"
-              className="typo-body-2-normal text-label-assistant font-medium hover:text-blue-600 hover:underline"
-            >
-              Projects / {props.title}
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <a href="/" className="typo-body-1-normal text-label-assistant block truncate font-medium hover:underline hover:decoration-black">
+              Projects / <span className="text-label-normal">{props.title}</span>
             </a>
           </div>
           <div className="flex shrink-0 items-center gap-2">

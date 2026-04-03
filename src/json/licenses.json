@@ -144,6 +144,12 @@
     "repository": "https://github.com/facebook/react.git"
   },
   {
+    "name": "react-textarea-autosize",
+    "version": "^8.5.9",
+    "license": "MIT",
+    "repository": "git+https://github.com/Andarist/react-textarea-autosize.git"
+  },
+  {
     "name": "tailwindcss",
     "version": "^4.1.18",
     "license": "MIT",

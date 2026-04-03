@@ -8,7 +8,6 @@ import Header from "@/components/shared/Header";
 import ProjectsList from "@/components/main/ProjectList";
 import ProjectTab from "@/components/main/ProjectTab";
 import HistoryList from "@/components/main/HistoryList";
-// import HistoryTable from "@/components/main/HistoryTable";
 
 export default function HomePage() {
   return (

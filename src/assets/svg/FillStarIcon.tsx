@@ -1,20 +1,13 @@
 export default function FillStarIcon({ className }: { className?: string }) {
   return (
-    <svg
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
-      fill="none"
-    >
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
       <path
         d="M11.0491 2.92702C11.3491 2.00602 12.6521 2.00602 12.9511 2.92702L14.4701 7.60102C14.6042 8.01228 14.9875 8.2907 15.4201 8.29102H20.3351C21.3041 8.29102 21.7061 9.53102 20.9231 10.101L16.9471 12.989C16.5967 13.2437 16.4502 13.6951 16.5841 14.107L18.1021 18.781C18.4021 19.703 17.3471 20.469 16.5641 19.899L12.5881 17.011C12.2375 16.7562 11.7627 16.7562 11.4121 17.011L7.4361 19.899C6.6531 20.469 5.5981 19.702 5.8981 18.781L7.4161 14.107C7.55001 13.6951 7.40347 13.2437 7.0531 12.989L3.0771 10.101C2.2931 9.53102 2.6971 8.29102 3.6651 8.29102H8.5791C9.01204 8.29113 9.39588 8.01263 9.5301 7.60102L11.0491 2.92702Z"
         fill="#FBBF24"
         stroke="#FBBF24"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );

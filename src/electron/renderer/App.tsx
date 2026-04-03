@@ -4,6 +4,8 @@ import HomePage from '../../app/page'
 import DesignSystemPage from '../../app/design-system/page'
 import LicensesPage from '../../app/licenses/page'
 import ProjectPage from '../../app/project/page'
+import ProjectApiPage from '../../app/api/page'
+import ApiJsonPage from '../../app/api/json/page'
 
 const useHashFallback = typeof window !== 'undefined' && window.location?.protocol === 'file:'
 
@@ -72,12 +74,20 @@ function App(): React.JSX.Element {
   const projectMatch = /^project(?:\/([^/]+))?$/.exec(route)
   const projectSlug = projectMatch ? (projectMatch[1] ?? null) : null
 
+  const apiMatch = /^api\/([^/]+)$/.exec(route)
+  const apiName = apiMatch ? decodeURIComponent(apiMatch[1]) : null
+
   let Page: React.ComponentType<any> = HomePage
   let pageProps: Record<string, unknown> = {}
   if (route === 'design-system') {
     Page = DesignSystemPage
   } else if (route === 'licenses') {
     Page = LicensesPage
+  } else if (route === 'api/json') {
+    Page = ApiJsonPage
+  } else if (apiMatch && apiName) {
+    Page = ProjectApiPage
+    pageProps = { apiName }
   } else if (projectMatch) {
     Page = ProjectPage
     pageProps = { projectSlug }

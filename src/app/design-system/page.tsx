@@ -1,7 +1,10 @@
 "use client";
 
+// Components
 import Header from "@/components/shared/Header";
 import Btn from "@/components/common/Btn";
+
+// Internal
 import palette from "@/styles/palette";
 
 // const PAGE_BG = "bg-[#202123]";
@@ -210,16 +213,13 @@ export default function DesignSystemPage() {
             <div className="mb-2 flex items-start justify-between gap-4">
               <div>
                 <h2 className="typo-title-3 text-label-normal">SPACING</h2>
-                <p className="typo-body-2-normal text-label-assistant mt-1">
-                  규격화된 간격을 사용해 안정적이고 일관된 구성을 돕습니다.
-                </p>
+                <p className="typo-body-2-normal text-label-assistant mt-1">규격화된 간격을 사용해 안정적이고 일관된 구성을 돕습니다.</p>
               </div>
               <span className="typo-caption-1 text-label-assistant shrink-0">*Token Kebab 표기법으로 사용</span>
             </div>
             <h3 className="typo-heading-1 text-label-normal mt-6 mb-2">SIZE UNIT</h3>
             <p className="typo-body-2-normal text-label-assistant mb-4">
-              8의 배수를 기반으로 8의 배수가 포함하고 있는 2와 4의 배수도 함께 사용합니다. 화면에 적용되는 간격은 종횡
-              구분 없이 해당 규칙을 따르는 것을 권장합니다.
+              8의 배수를 기반으로 8의 배수가 포함하고 있는 2와 4의 배수도 함께 사용합니다. 화면에 적용되는 간격은 종횡 구분 없이 해당 규칙을 따르는 것을 권장합니다.
             </p>
             <div className="mb-6 flex flex-wrap items-end gap-4">
               {SPACING_VALUES.filter((px) => px > 0).map((px) => (
@@ -275,15 +275,13 @@ export default function DesignSystemPage() {
           <section className={CARD_CLASS}>
             <h2 className="typo-title-3 text-label-normal">OBJECT STYLE</h2>
             <p className="typo-body-2-normal text-label-assistant mt-1">
-              Button, Input 등 화면에서 사용되는 컴포넌트의 Container를 구성하는 Border Radius, Border 값을 규격화하여
-              안정적이고 일관된 구성을 돕습니다.
+              Button, Input 등 화면에서 사용되는 컴포넌트의 Container를 구성하는 Border Radius, Border 값을 규격화하여 안정적이고 일관된 구성을 돕습니다.
             </p>
             <span className="typo-caption-1 text-label-assistant mt-2 block">* Token 명은 Kebab 표기법으로 사용</span>
 
             <h3 className="typo-heading-1 text-label-normal mt-8 mb-2">BORDER RADIUS</h3>
             <p className="typo-body-2-normal text-label-assistant mb-4">
-              시각적으로 일관된 화면을 구성하기 위해 Border Radius 값을 아래와 같이 규정하고, 디자인 요소들의 Border
-              Radius는 가능한 아래의 규칙을 따라 적용할 것을 권장합니다.
+              시각적으로 일관된 화면을 구성하기 위해 Border Radius 값을 아래와 같이 규정하고, 디자인 요소들의 Border Radius는 가능한 아래의 규칙을 따라 적용할 것을 권장합니다.
             </p>
             <div className="mb-6 flex flex-wrap gap-6">
               {RADIUS_VALUES.map((px, idx) => (
@@ -297,16 +295,12 @@ export default function DesignSystemPage() {
 
             <h3 className="typo-heading-1 text-label-normal mt-8 mb-2">BORDER</h3>
             <p className="typo-body-2-normal text-label-assistant mb-4">
-              시각적으로 일관된 화면을 구성하기 위해 Border Width 값을 아래와 같이 규정하고, 디자인 요소들의 Border
-              Width는 가능한 아래의 규칙을 따라 적용할 것을 권장합니다.
+              시각적으로 일관된 화면을 구성하기 위해 Border Width 값을 아래와 같이 규정하고, 디자인 요소들의 Border Width는 가능한 아래의 규칙을 따라 적용할 것을 권장합니다.
             </p>
             <div className="mb-6 flex flex-wrap gap-6">
               {BORDER_VALUES.map((px) => (
                 <div key={px} className="flex flex-col items-center gap-2">
-                  <div
-                    className="h-10 w-32 bg-white"
-                    style={{ borderWidth: px, borderStyle: "solid", borderColor: "#d4d4d4" }}
-                  />
+                  <div className="h-10 w-32 bg-white" style={{ borderWidth: px, borderStyle: "solid", borderColor: "#d4d4d4" }} />
                   <span className="typo-caption-1 text-label-assistant">{px}px</span>
                 </div>
               ))}
@@ -318,13 +312,10 @@ export default function DesignSystemPage() {
           <section className={CARD_CLASS}>
             <h2 className="typo-title-3 text-label-normal">TYPOGRAPHY</h2>
             <p className="typo-body-2-normal text-label-assistant mt-1">
-              영문은 Pretendard Regular, Medium, SemiBold 서체를 사용합니다. 국문은 프리텐다드 Regular, Medium, SemiBold
-              서체를 사용합니다.
+              영문은 Pretendard Regular, Medium, SemiBold 서체를 사용합니다. 국문은 프리텐다드 Regular, Medium, SemiBold 서체를 사용합니다.
             </p>
             <h3 className="typo-heading-1 text-label-normal mt-6 mb-2">FONT</h3>
-            <p className="typo-body-2-normal text-label-assistant">
-              Pretendard Regular, Medium, SemiBold (영문 / 국문 공통)
-            </p>
+            <p className="typo-body-2-normal text-label-assistant">Pretendard Regular, Medium, SemiBold (영문 / 국문 공통)</p>
             <h3 className="typo-heading-1 text-label-normal mt-6 mb-2">USAGE</h3>
             <div className="space-y-3">
               {typoUsage.map((t) => (
@@ -358,9 +349,7 @@ export default function DesignSystemPage() {
           {/* ---------- Button ---------- */}
           <section className={CARD_CLASS}>
             <h2 className="typo-title-3 text-label-normal">Button</h2>
-            <p className="typo-body-2-normal text-label-assistant mt-1">
-              2차 행동을 유도하거나, 상태를 표현하는 데 사용합니다.
-            </p>
+            <p className="typo-body-2-normal text-label-assistant mt-1">2차 행동을 유도하거나, 상태를 표현하는 데 사용합니다.</p>
             <h3 className="typo-heading-1 text-label-normal mt-6 mb-3">타입 (Type)</h3>
             <div className="mb-8 flex flex-wrap gap-4">
               <Btn category="primary" size="medium">
@@ -432,27 +421,17 @@ export default function DesignSystemPage() {
           {/* ---------- Icon Button ---------- */}
           <section className={CARD_CLASS}>
             <h2 className="typo-title-3 text-label-normal">Icon Button</h2>
-            <p className="typo-body-2-normal text-label-assistant mt-1">
-              아이콘을 버튼으로 사용해야 할 경우 사용합니다.
-            </p>
+            <p className="typo-body-2-normal text-label-assistant mt-1">아이콘을 버튼으로 사용해야 할 경우 사용합니다.</p>
             <h3 className="typo-heading-1 text-label-normal mt-6 mb-3">카테고리 (Category)</h3>
             <div className="mb-8 flex flex-wrap items-center gap-6">
               <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  className="cn-center bg-background-primary h-10 w-10 rounded-full"
-                  aria-label="Solid"
-                >
+                <button type="button" className="cn-center bg-background-primary h-10 w-10 rounded-full" aria-label="Solid">
                   <PlusIcon className="text-label-common" />
                 </button>
                 <span className="typo-caption-1 text-label-assistant">Solid</span>
               </div>
               <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  className="cn-center h-10 w-10 rounded-full border-2 border-gray-300 bg-white"
-                  aria-label="Outlined"
-                >
+                <button type="button" className="cn-center h-10 w-10 rounded-full border-2 border-gray-300 bg-white" aria-label="Outlined">
                   <PlusIcon className="text-label-neutral" />
                 </button>
                 <span className="typo-caption-1 text-label-assistant">Outlined</span>
@@ -467,31 +446,19 @@ export default function DesignSystemPage() {
             <h3 className="typo-heading-1 text-label-normal mb-3">크기 (Size)</h3>
             <div className="mb-8 flex flex-wrap items-end gap-6">
               <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  className="cn-center bg-background-primary h-7 w-7 rounded-full"
-                  aria-label="Small"
-                >
+                <button type="button" className="cn-center bg-background-primary h-7 w-7 rounded-full" aria-label="Small">
                   <PlusIcon className="text-label-common h-3 w-3" />
                 </button>
                 <span className="typo-caption-1 text-label-assistant">Small (28px)</span>
               </div>
               <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  className="cn-center bg-background-primary h-8 w-8 rounded-full"
-                  aria-label="Medium"
-                >
+                <button type="button" className="cn-center bg-background-primary h-8 w-8 rounded-full" aria-label="Medium">
                   <PlusIcon className="text-label-common h-4 w-4" />
                 </button>
                 <span className="typo-caption-1 text-label-assistant">Medium (32px)</span>
               </div>
               <div className="flex flex-col items-center gap-2">
-                <button
-                  type="button"
-                  className="cn-center bg-background-primary h-10 w-10 rounded-full"
-                  aria-label="Large"
-                >
+                <button type="button" className="cn-center bg-background-primary h-10 w-10 rounded-full" aria-label="Large">
                   <PlusIcon className="text-label-common" />
                 </button>
                 <span className="typo-caption-1 text-label-assistant">Large (40px)</span>
@@ -499,26 +466,13 @@ export default function DesignSystemPage() {
             </div>
             <h3 className="typo-heading-1 text-label-normal mb-3">상태 (State)</h3>
             <div className="flex flex-wrap gap-6">
-              <button
-                type="button"
-                className="cn-center bg-background-primary h-10 w-10 rounded-full"
-                aria-label="Enabled"
-              >
+              <button type="button" className="cn-center bg-background-primary h-10 w-10 rounded-full" aria-label="Enabled">
                 <PlusIcon className="text-label-common" />
               </button>
-              <button
-                type="button"
-                className="cn-center bg-background-primary-hover h-10 w-10 rounded-full"
-                aria-label="Hover"
-              >
+              <button type="button" className="cn-center bg-background-primary-hover h-10 w-10 rounded-full" aria-label="Hover">
                 <PlusIcon className="text-label-common" />
               </button>
-              <button
-                type="button"
-                className="cn-center h-10 w-10 cursor-not-allowed rounded-full bg-gray-200 opacity-50"
-                aria-label="Disabled"
-                disabled
-              >
+              <button type="button" className="cn-center h-10 w-10 cursor-not-allowed rounded-full bg-gray-200 opacity-50" aria-label="Disabled" disabled>
                 <PlusIcon className="text-label-assistant" />
               </button>
             </div>
@@ -530,18 +484,10 @@ export default function DesignSystemPage() {
               <button type="button" className="cn-center bg-background-primary h-8 w-8 rounded-full" aria-label="icon">
                 <PlusIcon className="text-label-common h-4 w-4" />
               </button>
-              <button
-                type="button"
-                className="cn-center bg-background-primary h-10 w-10 rounded-full"
-                aria-label="icon"
-              >
+              <button type="button" className="cn-center bg-background-primary h-10 w-10 rounded-full" aria-label="icon">
                 <PlusIcon className="text-label-common" />
               </button>
-              <button
-                type="button"
-                className="cn-center h-10 w-10 rounded-full border-2 border-gray-300 bg-white"
-                aria-label="icon"
-              >
+              <button type="button" className="cn-center h-10 w-10 rounded-full border-2 border-gray-300 bg-white" aria-label="icon">
                 <PlusIcon className="text-label-neutral" />
               </button>
             </div>
