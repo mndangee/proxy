@@ -11,6 +11,8 @@ import Btn from "@/components/common/Btn";
 
 export type HeaderVariant = "main" | "sub";
 
+const MAIN_HEADER_ACTION_BTN_WIDTH = 160;
+
 export interface HeaderProps {
   className?: string;
   /** 'main' = 메인 페이지 헤더, 'sub' = 그 외 (프로젝트 등) */
@@ -19,6 +21,8 @@ export interface HeaderProps {
   title: string;
   /** 메인 전용: 신규 프로젝트 생성 버튼 클릭 시 */
   onCreateProject?: () => void;
+  /** 메인 전용: 「새 프로젝트 만들기」 왼쪽에 표시되는 가져오기 (선택) */
+  onImportProject?: () => void;
   /** 서브 전용: 검색 입력 시 (선택) */
   onSearch?: (value: string) => void;
 }
@@ -35,10 +39,19 @@ export default function Header({ className = "", variant = "sub", ...props }: He
         {inner(
           <>
             <div className="typo-title-3 text-label-normal">{props.title}</div>
-            {props.onCreateProject != null && (
-              <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={props.onCreateProject} width={240}>
-                Create New Project
-              </Btn>
+            {(props.onImportProject != null || props.onCreateProject != null) && (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
+                {props.onImportProject != null && (
+                  <Btn category="secondary" variant size="medium" width={MAIN_HEADER_ACTION_BTN_WIDTH} onClick={props.onImportProject}>
+                    프로젝트 가져오기
+                  </Btn>
+                )}
+                {props.onCreateProject != null && (
+                  <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={props.onCreateProject} width={MAIN_HEADER_ACTION_BTN_WIDTH}>
+                    새 프로젝트 만들기
+                  </Btn>
+                )}
+              </div>
             )}
           </>,
         )}
@@ -55,31 +68,33 @@ export default function Header({ className = "", variant = "sub", ...props }: He
               Projects / <span className="text-label-normal">{props.title}</span>
             </a>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {searchOpen ? (
-              <input
-                type="search"
-                placeholder="검색"
-                value={searchValue}
-                onChange={(e) => {
-                  setSearchValue(e.target.value);
-                  props.onSearch?.(e.target.value);
-                }}
-                onBlur={() => setSearchOpen(false)}
-                autoFocus
-                className="typo-body-2-normal rounded-3 border-border-enabled bg-background-gray text-label-normal placeholder-label-assistant focus:border-border-primary w-48 border px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={() => setSearchOpen(true)}
-                className="text-label-assistant hover:bg-background-secondary-weak hover:text-label-neutral rounded p-2"
-                aria-label="검색"
-              >
-                <SearchIcon className="shrink-0" />
-              </button>
-            )}
-          </div>
+          {props.onSearch ? (
+            <div className="flex shrink-0 items-center gap-2">
+              {searchOpen ? (
+                <input
+                  type="search"
+                  placeholder="검색"
+                  value={searchValue}
+                  onChange={(e) => {
+                    setSearchValue(e.target.value);
+                    props.onSearch?.(e.target.value);
+                  }}
+                  onBlur={() => setSearchOpen(false)}
+                  autoFocus
+                  className="typo-body-2-normal rounded-3 border-border-enabled bg-background-gray text-label-normal placeholder-label-assistant focus:border-border-primary w-48 border px-3 py-2 outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(true)}
+                  className="text-label-assistant hover:bg-background-secondary-weak hover:text-label-neutral rounded p-2"
+                  aria-label="검색"
+                >
+                  <SearchIcon className="shrink-0" />
+                </button>
+              )}
+            </div>
+          ) : null}
         </>,
       )}
     </header>

@@ -1,3 +1,6 @@
+// Libs
+import { formatProjectUpdatedLabel } from "@/libs/projects/store";
+
 // Types
 import { Project } from "@/types";
 
@@ -28,7 +31,7 @@ export default function ProjectCard2({ project, href }: ProjectCardProps) {
         </button>
       </div>
       <h3 className="typo-body-2-normal text-label-normal mt-1 font-semibold">{project.name}</h3>
-      <p className="typo-body-2-normal text-label-assistant mt-1">Last updated {project.lastUpdated}</p>
+      <p className="typo-body-2-normal text-label-assistant mt-1">Last updated {formatProjectUpdatedLabel(project.updatedAt)}</p>
       <div className="mt-auto flex items-center justify-between pt-4">
         {href ? (
           <a href={href} className="typo-body-2-normal font-medium text-blue-600 hover:underline">

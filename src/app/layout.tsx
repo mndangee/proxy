@@ -1,3 +1,5 @@
+import GlobalCreateProjectModal from "@/components/providers/GlobalCreateProjectModal";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen min-w-[1600px] overflow-x-hidden bg-gray-50">
@@ -10,6 +12,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {" · "}© {new Date().getFullYear()} DataForge. Built with Electron + React.
         </footer>
       </div>
+      <div id="modal" />
+      <GlobalCreateProjectModal />
     </div>
   );
 }

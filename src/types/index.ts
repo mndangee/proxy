@@ -1,8 +1,14 @@
 export interface Project {
   id: string
   name: string
-  lastUpdated: string
+  description: string
+  /** ISO 8601 */
+  createdAt: string
+  /** ISO 8601 */
+  updatedAt: string
   isFavorite: boolean
+  /** Electron: userData/DataForge-projects 아래 폴더명 */
+  folderName?: string
 }
 
 export interface Activity {

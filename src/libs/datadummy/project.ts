@@ -1,6 +1,6 @@
 import type { ApiEndpoint, Project } from "@/types";
 
-import { mockProjects } from "./home";
+import { getStoredProjects } from "@/libs/projects/store";
 
 /** 프로젝트 ID별 API 엔드포인트 목 데이터 */
 export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
@@ -28,10 +28,12 @@ export function getEndpointsForProject(projectId: string): ApiEndpoint[] {
 }
 
 export function getProjectForApiName(apiName: string): Project | null {
+  const projects = getStoredProjects();
   for (const [projectId, endpoints] of Object.entries(mockEndpointsByProjectId)) {
     if (endpoints.some((e) => e.name === apiName)) {
-      return mockProjects.find((p) => p.id === projectId) ?? null;
+      return projects.find((p) => p.id === projectId) ?? null;
     }
   }
   return null;
 }
+

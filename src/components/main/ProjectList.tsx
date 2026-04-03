@@ -6,11 +6,13 @@ import Loader from "@/components/common/Loader";
 import ProjectCard from "@/components/main/ProjectCard";
 import NoProject from "@/components/main/NoProject";
 
-// Libs
-import { mockProjects } from "@/libs/data/home";
+// Types
+import type { Project } from "@/types";
 
 interface IProjectListProps {
   folderId: string;
+  projects: Project[];
+  onProjectsChange?: () => void;
 }
 
 export default function ProjectsList(props: IProjectListProps) {
@@ -19,10 +21,10 @@ export default function ProjectsList(props: IProjectListProps) {
   return (
     <div className="relative w-full">
       {isLoading && <Loader />}
-      {mockProjects.length > 0 ? (
+      {props.projects.length > 0 ? (
         <div className="mt-9 flex flex-wrap gap-6">
-          {mockProjects.map((project) => (
-            <ProjectCard key={project.id} projectName={project.name} lastUpdated={project.lastUpdated} setIsLoading={setIsLoading} />
+          {props.projects.map((project) => (
+            <ProjectCard key={project.id} project={project} setIsLoading={setIsLoading} onProjectsChange={props.onProjectsChange} />
           ))}
         </div>
       ) : (

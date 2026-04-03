@@ -20,22 +20,32 @@ export interface ICommonModalProps {
 }
 
 const modalSize: Record<ModalSizeType, string> = {
-  small: "w-[400px]",
-  medium: "w-[560px]",
+  small: "max-w-[400px]",
+  medium: "max-w-[560px]",
 };
 
 const ModalContents = (props: ICommonModalProps) => (
-  <>
-    <div className="fixed top-0 left-0 h-full w-full bg-black opacity-70" onClick={props.onClose}></div>
-    <div className={`${modalSize[props.size]} rounded-4 fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white`}>
+  <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6">
+    <button
+      type="button"
+      className="absolute inset-0 bg-black/70"
+      onClick={props.onClose}
+      aria-label="닫기"
+    />
+    <div
+      role="dialog"
+      aria-modal="true"
+      className={`${modalSize[props.size]} border-border-enabled relative z-[1] w-full overflow-y-auto rounded-4 border bg-background-white shadow-lg`}
+      onClick={(e) => e.stopPropagation()}
+    >
       {props.children}
       {props.showCloseBtn && (
-        <div className="absolute top-6 right-6 cursor-pointer" onClick={props.onClose}>
+        <button type="button" className="absolute top-6 right-6 cursor-pointer rounded p-1 text-label-assistant hover:bg-background-secondary-weak hover:text-label-neutral" onClick={props.onClose} aria-label="닫기">
           <CloseIcon />
-        </div>
+        </button>
       )}
     </div>
-  </>
+  </div>
 );
 
 export default function Modal(props: ICommonModalProps) {
