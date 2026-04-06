@@ -43,15 +43,15 @@ export default function ConfirmModal({
     })();
   };
 
-  /** 우측 X 버튼이 있을 때만 닫기 영역만큼 오른쪽 여백 */
-  const pad = showCloseBtn ? "px-8 pt-10 pb-8 pr-14" : "px-8 py-10";
+  /** X 버튼과 겹치지 않도록 상단 여백 */
+  const pad = showCloseBtn ? "px-8 pt-12 pb-8" : "px-8 py-10";
 
   return (
     <Modal isOpen={isOpen} onClose={busy ? undefined : onClose} size="small" showCloseBtn={showCloseBtn && !busy}>
-      <div className={`w-full ${pad} text-center`}>
-        {title ? <h2 className="typo-title-3 text-label-normal font-bold">{title}</h2> : null}
-        <div className={`typo-body-2-normal text-label-neutral ${title ? "mt-3" : ""}`}>{message}</div>
-        <div className="mt-8 flex justify-center gap-3">
+      <div className={`flex w-full flex-col items-center text-center ${pad}`}>
+        {title ? <h2 className="typo-title-3 text-label-normal w-full font-bold">{title}</h2> : null}
+        <div className={`typo-body-2-normal text-label-neutral w-full ${title ? "mt-3" : ""}`}>{message}</div>
+        <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-3">
           <Btn category="secondary" variant width={100} disabled={busy} onClick={onClose}>
             {cancelLabel}
           </Btn>

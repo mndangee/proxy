@@ -9,6 +9,7 @@ import DropDown from "@/components/common/DropDown";
 import Input from "@/components/common/Input";
 import TextArea from "@/components/common/TextArea";
 import Navigation from "@/components/shared/Navigation";
+import NoticeModal from "@/components/shared/NoticeModal";
 
 // Libs
 import { getApiResponseItem, setStoredActiveApiResponse } from "@/libs/datadummy/api";
@@ -135,6 +136,13 @@ export default function ApiJsonPage() {
   const [responseType, setResponseType] = useState<{ value: string; type: string }>(
     responseTypeOptions.find((option) => option.type === sourceType) ?? responseTypeOptions[0],
   );
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeMessage, setNoticeMessage] = useState("");
+
+  const showNotice = (message: string) => {
+    setNoticeMessage(message);
+    setNoticeOpen(true);
+  };
 
   const useAsResponse = () => {
     if (!sourceApiName) return;
@@ -171,12 +179,13 @@ export default function ApiJsonPage() {
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch {
-      alert("CONFIGURATION EDITOR의 JSON 형식을 확인해주세요.");
+      showNotice("CONFIGURATION EDITOR의 JSON 형식을 확인해주세요.");
     }
   };
 
   return (
     <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
+      <NoticeModal isOpen={noticeOpen} onClose={() => setNoticeOpen(false)} message={noticeMessage} />
       <Navigation
         activeProjectSlug={jsonNavActiveProjectSlug}
         currentApiName={sourceApiName || null}
@@ -231,7 +240,7 @@ export default function ApiJsonPage() {
                     >
                       취소
                     </Btn>
-                    <Btn category="primary" width={88} onClick={() => alert("저장")}>
+                    <Btn category="primary" width={88} onClick={() => showNotice("저장")}>
                       저장
                     </Btn>
                   </div>

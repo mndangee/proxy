@@ -211,7 +211,12 @@ npm run typecheck
 npm run lint
 npm run format
 npm run licenses
+npm run docs:data-guide-pdf   # docs/data-lifecycle-guide.md → PDF (Chromium 기반, 최초 1회 다운로드)
 ```
+
+## 문서
+
+- **`docs/data-lifecycle-guide.md`** — 프로젝트 데이터 **생성·저장·삭제** 흐름을 코드 파일/함수 단위로 정리한 가이드. PDF로 보려면 위 `docs:data-guide-pdf` 또는 문서 맨 아래 **「PDF로 보기」** 절 참고.
 
 ## 라이선스 페이지
 

@@ -1,5 +1,8 @@
 "use client";
 
+// React
+import { useState } from "react";
+
 // Assets
 import PlusIcon from "@/assets/svg/PlusIcon";
 
@@ -9,6 +12,7 @@ import ApiEndpointsTable from "@/components/project/ApiEndpointsTable";
 import NoApiEndpoints from "@/components/project/NoApiEndpoints";
 import Header from "@/components/shared/Header";
 import Navigation from "@/components/shared/Navigation";
+import NoticeModal from "@/components/shared/NoticeModal";
 
 // Libs
 import { getProjectBySlug, getProjectRouteSlug } from "@/libs/datadummy/home";
@@ -20,6 +24,14 @@ interface ProjectPageProps {
 }
 
 export default function ProjectPage({ projectSlug }: ProjectPageProps) {
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeMessage, setNoticeMessage] = useState("");
+
+  const showNotice = (message: string) => {
+    setNoticeMessage(message);
+    setNoticeOpen(true);
+  };
+
   const project = getProjectBySlug(projectSlug);
 
   if (!project) {
@@ -44,22 +56,25 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const handleExport = async () => {
     const folder = project.folderName;
     if (!folder) {
-      alert("이 프로젝트는 디스크 폴더 정보가 없습니다. Electron에서 만든 프로젝트만보낼 수 있습니다.");
+      showNotice("이 프로젝트는 디스크 폴더 정보가 없습니다. Electron에서 만든 프로젝트만 보낼 수 있습니다.");
       return;
     }
     const res = await exportProjectToFolder(folder);
     if (!res.ok) {
-      if (res.error === "electron-only") alert("Electron 앱에서만 폴더로보낼 수 있습니다.");
+      if (res.error === "electron-only") showNotice("Electron 앱에서만 폴더로 보낼 수 있습니다.");
       else if (res.error === "cancelled") return;
-      else if (res.error === "destination-exists") alert("선택한 위치에 같은 이름의 폴더가 이미 있습니다.");
-      else alert(`보내기 실패: ${res.error}`);
+      else if (res.error === "destination-exists") showNotice("선택한 위치에 같은 이름의 폴더가 이미 있습니다.");
+      else showNotice(`보내기에 실패했습니다. (${res.error ?? ""})`);
       return;
     }
-    alert(`프로젝트 폴더를 복사했습니다.\n${res.path ?? ""}\n이 폴더를 압축하거나 통째로 공유하면 다른 PC에서 「프로젝트 가져오기」로 열 수 있습니다.`);
+    showNotice(
+      `프로젝트 폴더를 복사했습니다.\n${res.path ?? ""}\n이 폴더를 압축하거나 통째로 공유하면 다른 PC에서 「프로젝트 가져오기」로 열 수 있습니다.`,
+    );
   };
 
   return (
     <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
+      <NoticeModal isOpen={noticeOpen} onClose={() => setNoticeOpen(false)} message={noticeMessage} />
       <Navigation activeProjectSlug={currentProjectSlug} onNewProject={() => (window.location.href = "/")} />
       <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled border-b">

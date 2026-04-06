@@ -20,6 +20,7 @@ interface ProjectsDiskApi {
   create: (input: { name: string; description: string; isFavorite: boolean }) => Promise<unknown>;
   updateFavorite: (input: { folderName: string; isFavorite: boolean }) => Promise<unknown>;
   export: (folderName: string) => Promise<unknown>;
+  exportZip: (folderName: string) => Promise<unknown>;
   import: () => Promise<unknown>;
   migrateFromLegacy: (legacy: unknown[]) => Promise<unknown>;
   getRootPath: () => Promise<unknown>;
@@ -34,6 +35,7 @@ function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
     typeof p.create === "function" &&
     typeof p.updateFavorite === "function" &&
     typeof p.export === "function" &&
+    typeof p.exportZip === "function" &&
     typeof p.import === "function" &&
     typeof p.migrateFromLegacy === "function" &&
     typeof p.getRootPath === "function" &&
@@ -54,6 +56,7 @@ function getProjectsApi(): ProjectsDiskApi | null {
     create: (payload) => ipc.invoke("project-fs:create", payload),
     updateFavorite: (payload) => ipc.invoke("project-fs:updateFavorite", payload),
     export: (folderName) => ipc.invoke("project-fs:export", folderName),
+    exportZip: (folderName) => ipc.invoke("project-fs:exportZip", folderName),
     import: () => ipc.invoke("project-fs:import"),
     migrateFromLegacy: (legacy) => ipc.invoke("project-fs:migrateFromLegacy", legacy),
     getRootPath: () => ipc.invoke("project-fs:getRootPath"),
@@ -206,9 +209,12 @@ export function formatDeleteProjectUserError(codeOrMessage: string): string {
   return `삭제에 실패했습니다. (${codeOrMessage})`;
 }
 
+export const DUPLICATE_PROJECT_NAME_MESSAGE = "이미 같은 이름의 프로젝트가 있습니다. 다른 이름을 사용해 주세요.";
+
 export function formatAddProjectUserError(codeOrMessage: string): string {
   const ko: Record<string, string> = {
     "empty-name": "프로젝트 이름을 입력해 주세요.",
+    "duplicate-name": DUPLICATE_PROJECT_NAME_MESSAGE,
     "invalid-response": "저장 응답이 올바르지 않습니다.",
     "missing-project": "저장 응답에 프로젝트 정보가 없습니다.",
     "create-failed": "프로젝트를 만들 수 없습니다.",
@@ -248,6 +254,10 @@ export async function addProject(input: { name: string; description: string; isF
       console.error("[addProject]", e);
       return { ok: false, error: msg };
     }
+  }
+
+  if (getStoredProjects().some((p) => p.name.trim() === name)) {
+    return { ok: false, error: "duplicate-name" };
   }
 
   const project = createProjectRecord({ ...input, name });
@@ -326,6 +336,14 @@ export async function exportProjectToFolder(folderName: string): Promise<{ ok: b
   const disk = getProjectsApi();
   if (!disk) return { ok: false, error: "electron-only" };
   const res = (await disk.export(folderName)) as { ok: boolean; error?: string; path?: string };
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, path: res.path };
+}
+
+export async function exportProjectToZip(folderName: string): Promise<{ ok: boolean; error?: string; path?: string }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "electron-only" };
+  const res = (await disk.exportZip(folderName)) as { ok: boolean; error?: string; path?: string };
   if (!res.ok) return { ok: false, error: res.error };
   return { ok: true, path: res.path };
 }

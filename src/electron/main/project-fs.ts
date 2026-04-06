@@ -1,7 +1,9 @@
 import { randomUUID } from "crypto";
 import { promises as fs } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
+import AdmZip from "adm-zip";
 import { app, dialog, ipcMain } from "electron";
 
 export const PROJECT_MANIFEST_VERSION = 1;
@@ -57,6 +59,61 @@ function isSafeProjectFolderName(name: string): boolean {
   return true;
 }
 
+/** ZIP 저장 파일명용 (Windows 등 금지 문자 제거) */
+function safeZipFileBaseName(name: string): string {
+  const t = name
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+  return t || "project";
+}
+
+/** 선택한 폴더 안에서 `이름.zip`이 있으면 `이름-2.zip` … 로 피함 */
+async function uniqueZipPathInDir(dir: string, base: string): Promise<string> {
+  let attempt = `${base}.zip`;
+  let n = 2;
+  for (;;) {
+    const full = join(dir, attempt);
+    try {
+      await fs.access(full);
+      attempt = `${base}-${n++}.zip`;
+    } catch {
+      return full;
+    }
+  }
+}
+
+async function findProjectDirWithManifest(root: string): Promise<string | null> {
+  if (await readManifest(root)) return root;
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const sub = join(root, ent.name);
+    if (await readManifest(sub)) return sub;
+  }
+  return null;
+}
+
+async function pickImportSourcePath(): Promise<string | null> {
+  const darwin = process.platform === "darwin";
+  const first = await dialog.showOpenDialog({
+    title: "가져올 프로젝트 (ZIP 또는 project.json 폴더)",
+    properties: darwin ? ["openFile", "openDirectory"] : ["openFile"],
+    filters: [{ name: "프로젝트 ZIP", extensions: ["zip"] }],
+  });
+  if (!first.canceled && first.filePaths[0]) return first.filePaths[0];
+
+  if (!darwin && first.canceled) {
+    const second = await dialog.showOpenDialog({
+      title: "가져올 프로젝트 폴더 (project.json 포함)",
+      properties: ["openDirectory"],
+    });
+    if (!second.canceled && second.filePaths[0]) return second.filePaths[0];
+  }
+  return null;
+}
+
 async function readManifest(projectRoot: string): Promise<ProjectManifest | null> {
   try {
     const raw = await fs.readFile(join(projectRoot, "project.json"), "utf-8");
@@ -67,6 +124,18 @@ async function readManifest(projectRoot: string): Promise<ProjectManifest | null
   } catch {
     return null;
   }
+}
+
+async function hasProjectWithDisplayName(root: string, displayName: string): Promise<boolean> {
+  const target = displayName.trim();
+  if (!target) return false;
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const m = await readManifest(join(root, ent.name));
+    if (m && m.name.trim() === target) return true;
+  }
+  return false;
 }
 
 type LegacyRow = {
@@ -84,6 +153,7 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:create");
   ipcMain.removeHandler("project-fs:updateFavorite");
   ipcMain.removeHandler("project-fs:export");
+  ipcMain.removeHandler("project-fs:exportZip");
   ipcMain.removeHandler("project-fs:import");
   ipcMain.removeHandler("project-fs:migrateFromLegacy");
   ipcMain.removeHandler("project-fs:getRootPath");
@@ -116,6 +186,10 @@ export function registerProjectFsIpc(): void {
     const root = getProjectsRoot();
     const name = String(p.name ?? "").trim();
     if (!name) return { ok: false as const, error: "empty-name" };
+
+    if (await hasProjectWithDisplayName(root, name)) {
+      return { ok: false as const, error: "duplicate-name" };
+    }
 
     const folderName = await uniqueFolderName(root, slugify(name));
     const projectRoot = join(root, folderName);
@@ -178,22 +252,73 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, path: dest };
   });
 
-  ipcMain.handle("project-fs:import", async () => {
-    await ensureProjectsRoot();
+  ipcMain.handle("project-fs:exportZip", async (_e, folderName: string) => {
+    const root = getProjectsRoot();
+    const src = join(root, folderName);
+    const cur = await readManifest(src);
+    if (!cur) return { ok: false as const, error: "not-found" };
+
     const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: "가져올 프로젝트 폴더 (project.json 포함)",
-      properties: ["openDirectory"],
+      title: "ZIP을 저장할 폴더 선택",
+      properties: ["openDirectory", "createDirectory"],
     });
     if (canceled || !filePaths[0]) return { ok: false as const, error: "cancelled" };
 
-    const src = filePaths[0];
-    const incoming = await readManifest(src);
-    if (!incoming) return { ok: false as const, error: "invalid-manifest" };
+    const outPath = await uniqueZipPathInDir(filePaths[0], safeZipFileBaseName(cur.name));
+
+    try {
+      const zip = new AdmZip();
+      zip.addLocalFolder(src, "");
+      zip.writeZip(outPath);
+    } catch {
+      return { ok: false as const, error: "zip-write-failed" };
+    }
+
+    return { ok: true as const, path: outPath };
+  });
+
+  ipcMain.handle("project-fs:import", async () => {
+    await ensureProjectsRoot();
+    const picked = await pickImportSourcePath();
+    if (!picked) return { ok: false as const, error: "cancelled" };
+
+    let srcDir = picked;
+    let cleanupTmp: string | null = null;
+
+    if (picked.toLowerCase().endsWith(".zip")) {
+      try {
+        const tmpRoot = join(tmpdir(), `df-import-${randomUUID()}`);
+        await fs.mkdir(tmpRoot, { recursive: true });
+        cleanupTmp = tmpRoot;
+        const zip = new AdmZip(picked);
+        zip.extractAllTo(tmpRoot, true);
+        const found = await findProjectDirWithManifest(tmpRoot);
+        if (!found) {
+          await fs.rm(tmpRoot, { recursive: true, force: true });
+          return { ok: false as const, error: "invalid-manifest" };
+        }
+        srcDir = found;
+      } catch {
+        if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
+        return { ok: false as const, error: "invalid-zip" };
+      }
+    }
+
+    const incoming = await readManifest(srcDir);
+    if (!incoming) {
+      if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
+      return { ok: false as const, error: "invalid-manifest" };
+    }
 
     const root = getProjectsRoot();
+    if (await hasProjectWithDisplayName(root, incoming.name)) {
+      if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
+      return { ok: false as const, error: "duplicate-name" };
+    }
+
     const folderName = await uniqueFolderName(root, slugify(incoming.folderName || incoming.name));
     const dest = join(root, folderName);
-    await fs.cp(src, dest, { recursive: true });
+    await fs.cp(srcDir, dest, { recursive: true });
 
     const now = new Date().toISOString();
     const imported: ProjectManifest = {
@@ -203,6 +328,8 @@ export function registerProjectFsIpc(): void {
       updatedAt: now,
     };
     await fs.writeFile(join(dest, "project.json"), JSON.stringify(imported, null, 2), "utf-8");
+
+    if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
 
     return { ok: true as const, project: imported };
   });

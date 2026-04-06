@@ -18,6 +18,7 @@ export interface ProjectFsApi {
   >;
   updateFavorite: (payload: { folderName: string; isFavorite: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
   export: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  exportZip: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   import: () => Promise<{ ok: true; project: ProjectManifest } | { ok: false; error: string }>;
   migrateFromLegacy: (legacy: unknown[]) => Promise<{ ok: true; count: number } | { ok: false; error: string }>;
   getRootPath: () => Promise<string>;

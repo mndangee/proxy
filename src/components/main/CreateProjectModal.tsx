@@ -9,6 +9,7 @@ import CheckBox, { type checkBoxObjectType } from "@/components/common/CheckBox"
 import Input from "@/components/common/Input";
 import Modal from "@/components/common/Modal";
 import TextArea from "@/components/common/TextArea";
+import NoticeModal from "@/components/shared/NoticeModal";
 
 // Libs
 import { addProject, formatAddProjectUserError } from "@/libs/projects/store";
@@ -26,12 +27,16 @@ export default function CreateProjectModal({ isOpen, onClose, onCreated }: Creat
   const [description, setDescription] = useState("");
   const [favoriteCheckState, setFavoriteCheckState] = useState<checkBoxObjectType>({ [FAVORITE_CHECK_KEY]: false });
   const [nameError, setNameError] = useState(false);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeMessage, setNoticeMessage] = useState("");
 
   const reset = () => {
     setName("");
     setDescription("");
     setFavoriteCheckState({ [FAVORITE_CHECK_KEY]: false });
     setNameError(false);
+    setNoticeOpen(false);
+    setNoticeMessage("");
   };
 
   const handleClose = () => {
@@ -52,7 +57,8 @@ export default function CreateProjectModal({ isOpen, onClose, onCreated }: Creat
         isFavorite: Boolean(favoriteCheckState[FAVORITE_CHECK_KEY]),
       });
       if (!result.ok) {
-        alert(formatAddProjectUserError(result.error));
+        setNoticeMessage(formatAddProjectUserError(result.error));
+        setNoticeOpen(true);
         return;
       }
       reset();
@@ -60,13 +66,16 @@ export default function CreateProjectModal({ isOpen, onClose, onCreated }: Creat
       onClose();
     } catch (e) {
       console.error(e);
-      alert("프로젝트 저장 중 오류가 났습니다.");
+      setNoticeMessage("프로젝트 저장 중 오류가 났습니다.");
+      setNoticeOpen(true);
     }
   };
 
   return (
+    <>
+      <NoticeModal isOpen={noticeOpen} onClose={() => setNoticeOpen(false)} message={noticeMessage} />
     <Modal isOpen={isOpen} onClose={handleClose} size="medium" showCloseBtn>
-      <div className="p-8 pt-10 pr-14">
+      <div className="px-8 pt-12 pb-8">
         <h2 className="typo-title-3 text-label-normal font-bold">새 프로젝트</h2>
         <p className="typo-body-2-normal text-label-assistant mt-2">이름과 설명을 입력하고 저장하면 목록에 반영됩니다.</p>
 
@@ -111,5 +120,6 @@ export default function CreateProjectModal({ isOpen, onClose, onCreated }: Creat
         </div>
       </div>
     </Modal>
+    </>
   );
 }

@@ -6,6 +6,7 @@ const projects = {
   create: (payload: { name: string; description: string; isFavorite: boolean }) => ipcRenderer.invoke("project-fs:create", payload),
   updateFavorite: (payload: { folderName: string; isFavorite: boolean }) => ipcRenderer.invoke("project-fs:updateFavorite", payload),
   export: (folderName: string) => ipcRenderer.invoke("project-fs:export", folderName),
+  exportZip: (folderName: string) => ipcRenderer.invoke("project-fs:exportZip", folderName),
   import: () => ipcRenderer.invoke("project-fs:import"),
   migrateFromLegacy: (legacy: unknown[]) => ipcRenderer.invoke("project-fs:migrateFromLegacy", legacy),
   getRootPath: () => ipcRenderer.invoke("project-fs:getRootPath"),
