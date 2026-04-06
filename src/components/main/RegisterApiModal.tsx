@@ -8,7 +8,7 @@ import Btn from "@/components/common/Btn";
 import DropDown from "@/components/common/DropDown";
 import Input from "@/components/common/Input";
 import Modal from "@/components/common/Modal";
-import NoticeModal from "@/components/shared/NoticeModal";
+import { NoticeModal } from "@/components/common/modals";
 import TextArea from "@/components/common/TextArea";
 
 // Libs
@@ -42,9 +42,10 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
   const isEdit = Boolean(initialEndpoint?.id);
   const [method, setMethod] = useState<{ value: string; type: string }>(METHOD_OPTIONS[0]);
   const [apiName, setApiName] = useState("");
-  const [path, setPath] = useState("");
+  const [trans, setTrans] = useState("");
   const [description, setDescription] = useState("");
   const [nameError, setNameError] = useState(false);
+  const [transError, setTransError] = useState(false);
   const [descriptionError, setDescriptionError] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState("");
@@ -52,9 +53,10 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
   const reset = () => {
     setMethod(METHOD_OPTIONS[0]);
     setApiName("");
-    setPath("");
+    setTrans("");
     setDescription("");
     setNameError(false);
+    setTransError(false);
     setDescriptionError(false);
     setNoticeOpen(false);
     setNoticeMessage("");
@@ -65,21 +67,23 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
     if (initialEndpoint?.id) {
       setMethod(methodOption(initialEndpoint.method));
       setApiName(initialEndpoint.name);
-      setPath(initialEndpoint.path ?? "");
+      setTrans(initialEndpoint.tran ?? "");
       setDescription(initialEndpoint.description ?? "");
       setNameError(false);
+      setTransError(false);
       setDescriptionError(false);
     } else {
       setMethod(METHOD_OPTIONS[0]);
       setApiName("");
-      setPath("");
+      setTrans("");
       setDescription("");
       setNameError(false);
+      setTransError(false);
       setDescriptionError(false);
     }
     setNoticeOpen(false);
     setNoticeMessage("");
-  }, [isOpen, initialEndpoint?.id]);
+  }, [isOpen, initialEndpoint?.id, initialEndpoint?.tran, initialEndpoint?.name, initialEndpoint?.method, initialEndpoint?.description]);
 
   const handleClose = () => {
     reset();
@@ -88,6 +92,7 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
 
   const handleSubmit = async () => {
     const n = apiName.trim();
+    const transTrim = trans.trim();
     const desc = description.trim();
     let invalid = false;
     if (!n) {
@@ -95,6 +100,12 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
       invalid = true;
     } else {
       setNameError(false);
+    }
+    if (!transTrim) {
+      setTransError(true);
+      invalid = true;
+    } else {
+      setTransError(false);
     }
     if (!desc) {
       setDescriptionError(true);
@@ -105,7 +116,7 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
     if (invalid) return;
     const body = {
       method: method.type,
-      path: path.trim(),
+      tran: transTrim,
       description: desc,
       name: n,
     };
@@ -134,7 +145,7 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
                 <RequiredLabel>API 이름</RequiredLabel>
                 <Input
                   value={apiName}
-                  placeholder="예: VD.MOVS0001"
+                  placeholder="예: goPinCertRequest"
                   width="100%"
                   error={nameError}
                   onChange={(e) => {
@@ -160,8 +171,18 @@ export default function RegisterApiModal({ isOpen, onClose, project, onRegistere
             </div>
 
             <div className="flex flex-col gap-3">
-              <div className="typo-body-2-normal font-medium text-neutral-500">엔드포인트 경로</div>
-              <Input value={path} placeholder="예: /api/v1/users" width="100%" onChange={(e) => setPath(e.target.value)} />
+              <RequiredLabel>트랜 이름</RequiredLabel>
+              <Input
+                value={trans}
+                placeholder="예: VD.MOVS0001"
+                width="100%"
+                error={transError}
+                onChange={(e) => {
+                  setTrans(e.target.value);
+                  if (transError) setTransError(false);
+                }}
+              />
+              {transError ? <p className="typo-caption-1 text-label-negative mt-2">트랜 이름을 입력해 주세요.</p> : null}
             </div>
 
             <div className="flex flex-col gap-3">

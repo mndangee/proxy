@@ -142,9 +142,10 @@ async function hasProjectWithDisplayName(root: string, displayName: string): Pro
 export interface StoredApiEntry {
   id: string;
   method: string;
-  path: string;
+  /** 트랜 이름 (구버전 파일은 `path` 필드 — 읽을 때만 호환) */
+  tran: string;
   description: string;
-  /** 내비·링크용 표시 이름 (예: `GET /api/v1/users`) */
+  /** API 이름 (예: VD.MOVS0001) */
   name: string;
   createdAt: string;
   updatedAt: string;
@@ -163,18 +164,21 @@ async function readApisIndex(projectRoot: string): Promise<StoredApiEntry[]> {
       if (!item || typeof item !== "object") continue;
       const o = item as Record<string, unknown>;
       if (typeof o.id !== "string" || typeof o.method !== "string") continue;
-      const pathTrim = typeof o.path === "string" ? o.path.trim() : "";
+      const fromTran = typeof o.tran === "string" ? o.tran.trim() : "";
+      const fromPath = typeof o.path === "string" ? String(o.path).trim() : "";
+      /** 빈 `tran`만 있고 레거시 `path`에 값이 있는 JSON 호환 */
+      const tranTrim = fromTran || fromPath;
       const methodUp = String(o.method).toUpperCase();
       out.push({
         id: o.id,
         method: methodUp,
-        path: pathTrim,
+        tran: tranTrim,
         description: typeof o.description === "string" ? o.description : "",
         name:
           typeof o.name === "string"
             ? o.name
-            : pathTrim
-              ? `${methodUp} ${pathTrim}`
+            : tranTrim
+              ? `${methodUp} ${tranTrim}`
               : methodUp,
         createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
         updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
@@ -189,7 +193,16 @@ async function readApisIndex(projectRoot: string): Promise<StoredApiEntry[]> {
 async function writeApisIndex(projectRoot: string, items: StoredApiEntry[]): Promise<void> {
   const fp = join(projectRoot, "apis", "index.json");
   await fs.mkdir(join(projectRoot, "apis"), { recursive: true });
-  await fs.writeFile(fp, JSON.stringify(items, null, 2), "utf-8");
+  const sanitized = items.map((row) => ({
+    id: row.id,
+    method: row.method,
+    tran: row.tran,
+    description: row.description,
+    name: row.name,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }));
+  await fs.writeFile(fp, JSON.stringify(sanitized, null, 2), "utf-8");
 }
 
 type LegacyRow = {
@@ -443,16 +456,17 @@ export function registerProjectFsIpc(): void {
 
     const p =
       payload != null && typeof payload === "object"
-        ? (payload as { method?: unknown; path?: unknown; description?: unknown; name?: unknown })
+        ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown })
         : {};
     const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
-    const pathStr = String(p.path ?? "").trim();
+    const tranStr = String(p.tran ?? p.path ?? "").trim();
     const description = String(p.description ?? "").trim();
     const apiDisplayName = String(p.name ?? "").trim();
 
     if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
     if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
     if (!description) return { ok: false as const, error: "empty-description" };
+    if (!tranStr) return { ok: false as const, error: "empty-tran" };
 
     const root = getProjectsRoot();
     const projectRoot = join(root, fname);
@@ -460,8 +474,8 @@ export function registerProjectFsIpc(): void {
     if (!manifest) return { ok: false as const, error: "not-found" };
 
     const items = await readApisIndex(projectRoot);
-    const normPath = pathStr;
-    if (items.some((x) => x.method === methodRaw && x.path.trim() === normPath)) {
+    const normTran = tranStr;
+    if (items.some((x) => x.method === methodRaw && x.tran.trim() === normTran)) {
       return { ok: false as const, error: "duplicate-endpoint" };
     }
     if (items.some((x) => x.name.trim() === apiDisplayName)) {
@@ -472,7 +486,7 @@ export function registerProjectFsIpc(): void {
     const entry: StoredApiEntry = {
       id: randomUUID(),
       method: methodRaw,
-      path: normPath,
+      tran: normTran,
       description,
       name: apiDisplayName,
       createdAt: now,
@@ -498,16 +512,17 @@ export function registerProjectFsIpc(): void {
 
       const p =
         payload != null && typeof payload === "object"
-          ? (payload as { method?: unknown; path?: unknown; description?: unknown; name?: unknown })
+          ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown })
           : {};
       const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
-      const pathStr = String(p.path ?? "").trim();
+      const tranStr = String(p.tran ?? p.path ?? "").trim();
       const description = String(p.description ?? "").trim();
       const apiDisplayName = String(p.name ?? "").trim();
 
       if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
       if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
       if (!description) return { ok: false as const, error: "empty-description" };
+      if (!tranStr) return { ok: false as const, error: "empty-tran" };
 
       const root = getProjectsRoot();
       const projectRoot = join(root, fname);
@@ -518,9 +533,9 @@ export function registerProjectFsIpc(): void {
       const idx = items.findIndex((x) => x.id === id);
       if (idx < 0) return { ok: false as const, error: "api-not-found" };
 
-      const normPath = pathStr;
+      const normTran = tranStr;
       if (
-        items.some((x, i) => i !== idx && x.method === methodRaw && x.path.trim() === normPath)
+        items.some((x, i) => i !== idx && x.method === methodRaw && x.tran.trim() === normTran)
       ) {
         return { ok: false as const, error: "duplicate-endpoint" };
       }
@@ -533,7 +548,7 @@ export function registerProjectFsIpc(): void {
       const entry: StoredApiEntry = {
         ...prev,
         method: methodRaw,
-        path: normPath,
+        tran: normTran,
         description,
         name: apiDisplayName,
         updatedAt: now,

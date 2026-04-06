@@ -8,8 +8,7 @@ import StarIcon from "@/assets/svg/StarIcon";
 import FillStarIcon from "@/assets/svg/FillStarIcon";
 
 // Components
-import ConfirmModal from "@/components/shared/ConfirmModal";
-import NoticeModal from "@/components/shared/NoticeModal";
+import { ConfirmModal, NoticeModal } from "@/components/common/modals";
 
 // Libs
 import {

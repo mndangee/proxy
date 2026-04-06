@@ -5,6 +5,11 @@ import { slugify } from "@/libs/slugify";
 
 const LEGACY_STORAGE_KEY = "proxy-app-projects-v1";
 
+/** Electron 미사용(브라우저) 시 프로젝트별 API 목록 — `apis/index.json`과 동형 row */
+const BROWSER_APIS_STORAGE_KEY = "proxy-app-project-apis-v1";
+
+const BROWSER_API_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
 export const PROJECTS_CHANGED_EVENT = "proxy-projects-changed";
 
 /** 헤더·LNB 등 어디서든 프로젝트 생성 모달을 열 때 사용 */
@@ -34,11 +39,11 @@ interface ProjectsDiskApi {
   getRootPath: () => Promise<unknown>;
   deleteFolder: (folderName: string) => Promise<unknown>;
   listApis: (folderName: string) => Promise<unknown>;
-  addApi: (folderName: string, payload: { method: string; path: string; description: string; name: string }) => Promise<unknown>;
+  addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
   updateApi: (
     folderName: string,
     apiId: string,
-    payload: { method: string; path: string; description: string; name: string },
+    payload: { method: string; tran: string; description: string; name: string },
   ) => Promise<unknown>;
   deleteApi: (folderName: string, apiId: string) => Promise<unknown>;
 }
@@ -147,23 +152,101 @@ export function notifyProjectsChanged() {
 type DiskApiRow = {
   id: string;
   method: string;
-  path: string;
+  tran: string;
   description: string;
   name: string;
   createdAt: string;
   updatedAt: string;
 };
 
+/** IPC·localStorage 레거시 `path` 필드를 `tran`으로 정규화 */
+function coerceDiskApiRow(item: unknown): DiskApiRow | null {
+  if (!item || typeof item !== "object") return null;
+  const o = item as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.method !== "string") return null;
+  const fromTran = typeof o.tran === "string" ? o.tran.trim() : "";
+  const fromPath = typeof o.path === "string" ? String(o.path).trim() : "";
+  const tran = fromTran || fromPath;
+  return {
+    id: o.id,
+    method: String(o.method).toUpperCase(),
+    tran,
+    description: typeof o.description === "string" ? o.description : "",
+    name: typeof o.name === "string" ? o.name : "",
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
+    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
+  };
+}
+
 function diskRowToEndpoint(row: DiskApiRow): ApiEndpoint {
   return {
     id: row.id,
     method: row.method,
-    path: row.path,
+    tran: row.tran ?? "",
     description: row.description,
     name: row.name,
     lastModified: row.updatedAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function readAllBrowserApisMap(): Record<string, DiskApiRow[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(BROWSER_APIS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, DiskApiRow[]>;
+  } catch {
+    return {};
+  }
+}
+
+function writeAllBrowserApisMap(map: Record<string, DiskApiRow[]>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BROWSER_APIS_STORAGE_KEY, JSON.stringify(map));
+}
+
+function readBrowserApisRows(projectId: string): DiskApiRow[] {
+  const all = readAllBrowserApisMap();
+  const arr = all[projectId];
+  if (!Array.isArray(arr)) return [];
+  return arr.map((raw) => coerceDiskApiRow(raw)).filter((x): x is DiskApiRow => x != null);
+}
+
+function writeBrowserApisRows(projectId: string, rows: DiskApiRow[]) {
+  const all = readAllBrowserApisMap();
+  all[projectId] = rows;
+  writeAllBrowserApisMap(all);
+}
+
+function removeBrowserApisForProject(projectId: string) {
+  const all = readAllBrowserApisMap();
+  delete all[projectId];
+  writeAllBrowserApisMap(all);
+}
+
+function newDiskApiRowId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function validateBrowserApiPayload(input: { method: string; tran: string; description: string; name: string }): string | null {
+  const methodRaw = input.method.trim().toUpperCase();
+  if (!BROWSER_API_HTTP_METHODS.has(methodRaw)) return "invalid-method";
+  if (!input.name.trim()) return "empty-name";
+  if (!input.description.trim()) return "empty-description";
+  if (!input.tran.trim()) return "empty-tran";
+  return null;
+}
+
+function browserHasDuplicateEndpoint(items: DiskApiRow[], method: string, tranTrim: string, excludeId?: string): boolean {
+  return items.some((x) => x.id !== excludeId && x.method === method && x.tran.trim() === tranTrim);
+}
+
+function browserHasDuplicateName(items: DiskApiRow[], nameTrim: string, excludeId?: string): boolean {
+  return items.some((x) => x.id !== excludeId && x.name.trim() === nameTrim);
 }
 
 /** API 목록「마지막 변경」열 — `YYYY.MM.DD HH:MM` (24h) */
@@ -185,10 +268,15 @@ export function notifyProjectApisChanged() {
   window.dispatchEvent(new CustomEvent(PROJECT_APIS_CHANGED_EVENT));
 }
 
-/** 디스크에 저장된 API + 데모(mock) ID 목록 */
+/** 디스크·브라우저 저장 API + 데모(mock) ID 목록 */
 export function getEndpointsForProject(projectId: string): ApiEndpoint[] {
   if (Object.prototype.hasOwnProperty.call(diskEndpointsCache, projectId)) {
     return diskEndpointsCache[projectId] ?? [];
+  }
+  if (typeof window !== "undefined" && !getProjectsApi()) {
+    const rows = readBrowserApisRows(projectId);
+    diskEndpointsCache[projectId] = rows.map(diskRowToEndpoint);
+    return diskEndpointsCache[projectId];
   }
   return mockEndpointsByProjectId[projectId] ?? [];
 }
@@ -201,18 +289,34 @@ export function getProjectForApiName(apiName: string): Project | null {
   return null;
 }
 
+/** `apiName`이 프로젝트에 저장된 API인 경우 해당 엔드포인트(메서드·경로·설명 등) */
+export function getApiEndpointByName(apiName: string): ApiEndpoint | null {
+  const project = getProjectForApiName(apiName);
+  if (!project) return null;
+  return getEndpointsForProject(project.id).find((e) => e.name === apiName) ?? null;
+}
+
 export async function refreshProjectApisFromDisk(projectId: string): Promise<void> {
-  const p = getStoredProjects().find((x) => x.id === projectId);
   const disk = getProjectsApi();
+  if (!disk) {
+    const rows = readBrowserApisRows(projectId);
+    diskEndpointsCache[projectId] = rows.map(diskRowToEndpoint);
+    notifyProjectApisChanged();
+    return;
+  }
+
+  const p = getStoredProjects().find((x) => x.id === projectId);
   const folder = p?.folderName?.trim();
-  if (!folder || !disk) {
+  if (!folder) {
     delete diskEndpointsCache[projectId];
     notifyProjectApisChanged();
     return;
   }
   try {
     const raw = (await disk.listApis(folder)) as unknown;
-    diskEndpointsCache[projectId] = Array.isArray(raw) ? (raw as DiskApiRow[]).map(diskRowToEndpoint) : [];
+    diskEndpointsCache[projectId] = Array.isArray(raw)
+      ? raw.map((item) => coerceDiskApiRow(item)).filter((x): x is DiskApiRow => x != null).map(diskRowToEndpoint)
+      : [];
   } catch {
     diskEndpointsCache[projectId] = [];
   }
@@ -226,15 +330,17 @@ async function refreshAllProjectApisFromDisk(): Promise<void> {
 
 export function formatAddApiUserError(code: string): string {
   const ko: Record<string, string> = {
-    "electron-only": "Electron 앱에서만 API를 등록할 수 있습니다.",
+    "electron-only": "이 환경에서는 API를 저장할 수 없습니다.",
     "no-folder": "프로젝트 폴더 정보가 없어 API를 저장할 수 없습니다.",
     "invalid-folder": "프로젝트를 찾을 수 없습니다.",
     "not-found": "프로젝트를 찾을 수 없습니다.",
     "invalid-method": "HTTP 메서드를 확인해 주세요.",
     "empty-name": "API 이름을 입력해 주세요.",
+    "empty-path": "트랜 이름을 입력해 주세요.",
+    "empty-tran": "트랜 이름을 입력해 주세요.",
     "empty-description": "API 설명을 입력해 주세요.",
     "api-not-found": "수정·삭제할 API를 찾을 수 없습니다.",
-    "duplicate-endpoint": "같은 메서드와 경로의 API가 이미 있습니다.",
+    "duplicate-endpoint": "같은 메서드와 트랜 이름의 API가 이미 있습니다.",
     "duplicate-api-name": "같은 API 이름이 이미 있습니다.",
     "add-failed": "API를 저장하지 못했습니다.",
     "update-failed": "API를 수정하지 못했습니다.",
@@ -265,12 +371,40 @@ async function ipcInvokeDisk(
 
 export async function addProjectApiEndpoint(
   projectId: string,
-  input: { method: string; path: string; description: string; name: string },
+  input: { method: string; tran: string; description: string; name: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
+  const br = validateBrowserApiPayload(input);
+  if (br) return { ok: false, error: br };
+
   const disk = getProjectsApi();
-  if (!disk) return { ok: false, error: "electron-only" };
-  const folder = p?.folderName?.trim();
+  if (!disk) {
+    const items = readBrowserApisRows(projectId);
+    const methodRaw = input.method.trim().toUpperCase();
+    const normTran = input.tran.trim();
+    const nameTrim = input.name.trim();
+    if (browserHasDuplicateEndpoint(items, methodRaw, normTran)) return { ok: false, error: "duplicate-endpoint" };
+    if (browserHasDuplicateName(items, nameTrim)) return { ok: false, error: "duplicate-api-name" };
+    const now = new Date().toISOString();
+    const row: DiskApiRow = {
+      id: newDiskApiRowId(),
+      method: methodRaw,
+      tran: normTran,
+      description: input.description.trim(),
+      name: nameTrim,
+      createdAt: now,
+      updatedAt: now,
+    };
+    items.push(row);
+    writeBrowserApisRows(projectId, items);
+    diskEndpointsCache[projectId] = items.map(diskRowToEndpoint);
+    notifyProjectApisChanged();
+    return { ok: true };
+  }
+
+  const folder = p.folderName?.trim();
   if (!folder) return { ok: false, error: "no-folder" };
   const res = await ipcInvokeDisk(() => disk.addApi(folder, input), "add-failed");
   if (!res.ok) return { ok: false, error: res.error };
@@ -287,12 +421,41 @@ export async function addProjectApiEndpoint(
 export async function updateProjectApiEndpoint(
   projectId: string,
   apiId: string,
-  input: { method: string; path: string; description: string; name: string },
+  input: { method: string; tran: string; description: string; name: string },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
+  const br = validateBrowserApiPayload(input);
+  if (br) return { ok: false, error: br };
+
   const disk = getProjectsApi();
-  if (!disk) return { ok: false, error: "electron-only" };
-  const folder = p?.folderName?.trim();
+  if (!disk) {
+    const items = readBrowserApisRows(projectId);
+    const idx = items.findIndex((x) => x.id === apiId);
+    if (idx < 0) return { ok: false, error: "api-not-found" };
+    const methodRaw = input.method.trim().toUpperCase();
+    const normTran = input.tran.trim();
+    const nameTrim = input.name.trim();
+    if (browserHasDuplicateEndpoint(items, methodRaw, normTran, apiId)) return { ok: false, error: "duplicate-endpoint" };
+    if (browserHasDuplicateName(items, nameTrim, apiId)) return { ok: false, error: "duplicate-api-name" };
+    const now = new Date().toISOString();
+    const prev = items[idx];
+    items[idx] = {
+      ...prev,
+      method: methodRaw,
+      tran: normTran,
+      description: input.description.trim(),
+      name: nameTrim,
+      updatedAt: now,
+    };
+    writeBrowserApisRows(projectId, items);
+    diskEndpointsCache[projectId] = items.map(diskRowToEndpoint);
+    notifyProjectApisChanged();
+    return { ok: true };
+  }
+
+  const folder = p.folderName?.trim();
   if (!folder) return { ok: false, error: "no-folder" };
   const res = await ipcInvokeDisk(() => disk.updateApi(folder, apiId, input), "update-failed");
   if (!res.ok) return { ok: false, error: res.error };
@@ -311,9 +474,20 @@ export async function deleteProjectApiEndpoint(
   apiId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
   const disk = getProjectsApi();
-  if (!disk) return { ok: false, error: "electron-only" };
-  const folder = p?.folderName?.trim();
+  if (!disk) {
+    const items = readBrowserApisRows(projectId);
+    const next = items.filter((x) => x.id !== apiId);
+    if (next.length === items.length) return { ok: false, error: "api-not-found" };
+    writeBrowserApisRows(projectId, next);
+    diskEndpointsCache[projectId] = next.map(diskRowToEndpoint);
+    notifyProjectApisChanged();
+    return { ok: true };
+  }
+
+  const folder = p.folderName?.trim();
   if (!folder) return { ok: false, error: "no-folder" };
   const res = await ipcInvokeDisk(() => disk.deleteApi(folder, apiId), "delete-failed");
   if (!res.ok) return { ok: false, error: res.error };
@@ -474,6 +648,7 @@ export async function addProject(input: { name: string; description: string; isF
   writeLegacyList(next);
   projectsCache = next;
   notifyProjectsChanged();
+  await refreshProjectApisFromDisk(project.id);
   return { ok: true, project };
 }
 
@@ -510,6 +685,7 @@ export async function deleteProject(projectId: string): Promise<{ ok: boolean; e
   writeLegacyList(next);
   projectsCache = next;
   delete diskEndpointsCache[projectId];
+  removeBrowserApisForProject(projectId);
   notifyProjectsChanged();
   notifyProjectApisChanged();
   return { ok: true };

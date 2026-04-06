@@ -21,7 +21,8 @@ export interface Activity {
 export interface ApiEndpoint {
   id: string
   method: string
-  path: string
+  /** 트랜 이름 */
+  tran: string
   description: string
   /** API 이름 (예: VD.MOVS0001) */
   name: string

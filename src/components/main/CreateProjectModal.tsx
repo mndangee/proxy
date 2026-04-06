@@ -9,7 +9,7 @@ import CheckBox, { type checkBoxObjectType } from "@/components/common/CheckBox"
 import Input from "@/components/common/Input";
 import Modal from "@/components/common/Modal";
 import TextArea from "@/components/common/TextArea";
-import NoticeModal from "@/components/shared/NoticeModal";
+import { NoticeModal } from "@/components/common/modals";
 
 // Libs
 import { addProject, formatAddProjectUserError } from "@/libs/projects/store";

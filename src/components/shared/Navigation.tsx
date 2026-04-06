@@ -18,7 +18,7 @@ import Btn from "@/components/common/Btn";
 import useInput from "@/hooks/useInput";
 
 // Libs
-import { getApiResponseGroups, getJsonEditorEntryHref, type ApiResponseItem } from "@/libs/datadummy/api";
+import { getApiResponseGroups, type ApiResponseItem } from "@/libs/datadummy/api";
 import {
   getEndpointsForProject,
   getProjectForApiName,
@@ -100,10 +100,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const fallbackApiName = isApiDetailRoute ? decodeURIComponent(pathname.replace("/api/", "")) : null;
   const resolvedApiName = currentApiName ?? fallbackApiName;
   const currentApiProject = resolvedApiName ? getProjectForApiName(resolvedApiName) : null;
-  const apiEndpointItems = useMemo(
-    () => (currentApiProject ? getEndpointsForProject(currentApiProject.id) : []),
-    [currentApiProject?.id, resolvedApiName, apisTick],
-  );
+  const apiEndpointItems = useMemo(() => (currentApiProject ? getEndpointsForProject(currentApiProject.id) : []), [currentApiProject?.id, resolvedApiName, apisTick]);
 
   const showProjectListInNav = !isApiJsonPage && !isApiDetailRoute;
   const hasFavoriteProjects = navProjects.some((p) => p.isFavorite);
@@ -125,7 +122,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   return (
     <div
       className={`flex min-h-screen shrink-0 flex-col self-stretch border-r bg-[#2D2D2D] transition-[width,padding] duration-200 ease-in-out ${
-        isNavOpen ? "w-[280px] p-7" : "w-14 overflow-hidden px-3 py-7"
+        isNavOpen ? "w-[320px] p-7" : "w-14 overflow-hidden px-3 py-7"
       }`}
     >
       {/* 상단: 즐겨찾기·홈 · 토글 */}
@@ -189,18 +186,28 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
               <JsonEditorResponseNav apiName={jsonEditorApiName} />
             ) : isApiDetailRoute && resolvedApiName ? (
               <div className="flex flex-col gap-2">
-                {apiEndpointItems.map((item) => (
-                  <a
-                    key={item.id}
-                    href={getJsonEditorEntryHref(item.name)}
-                    className={`typo-body-2-normal rounded-3 px-5 py-4 no-underline transition-colors ${
-                      item.name === resolvedApiName ? "bg-[#13A4EC]/10 text-[#13A4EC]" : "text-label-common bg-white/5 hover:bg-white/10"
-                    }`}
-                  >
-                    <div className="truncate font-medium">{item.name}</div>
-                    <div className="typo-caption-1 text-label-assistant mt-1 truncate">{item.path}</div>
-                  </a>
-                ))}
+                {apiEndpointItems.map((item) => {
+                  const isItemActive = item.name === resolvedApiName;
+                  const callFn = item.tran?.trim() || "—";
+                  const apiTitle = item.name || "—";
+                  const lineClass = `${isItemActive ? "text-[#13A4EC]" : "text-label-assistant"}`;
+                  return (
+                    <a
+                      key={item.id}
+                      href={`/api/${encodeURIComponent(item.name)}`}
+                      title={`${callFn} · ${apiTitle}${item.description ? ` — ${item.description}` : ""}`}
+                      className={`rounded-3 block min-w-0 px-5 py-4 no-underline transition-colors ${
+                        isItemActive ? "bg-[#13A4EC]/10" : "text-label-common bg-white/5 hover:bg-white/10"
+                      }`}
+                    >
+                      <div className={`flex min-w-0 items-center justify-between`}>
+                        <span className={`typo-body-1-normal shrink truncate ${isItemActive ? "text-[#13A4EC]" : "text-label-common"}`}>{callFn}</span>
+                        <span className="typo-body-2-normal text-label-common truncate">{apiTitle}</span>
+                      </div>
+                      <div className={`${lineClass} text-label-common typo-caption-1 mt-3 truncate`}>{item.description || "—"}</div>
+                    </a>
+                  );
+                })}
               </div>
             ) : (
               projectsForNav.map((project) => {
@@ -220,7 +227,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
                   <a
                     key={project.id}
                     href={getProjectHref(project)}
-                    className={`typo-body-2-normal flex items-center gap-3 px-5 py-4 font-medium no-underline transition-colors ${
+                    className={`typo-body-1-normal flex items-center gap-3 px-5 py-4 font-medium no-underline transition-colors ${
                       isActive ? "bg-[#13A4EC]/10 text-[#13A4EC]" : "text-label-common hover:bg-blue-100/10"
                     }`}
                   >
@@ -233,7 +240,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
           </div>
 
           {!isApiDetailRoute && !isApiJsonPage && (
-            <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width={220}>
+            <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width="100%">
               프로젝트 생성하기
             </Btn>
           )}

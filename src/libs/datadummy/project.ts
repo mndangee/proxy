@@ -6,7 +6,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "1-1",
       method: "POST",
-      path: "/api/v1/auth/login",
+      tran: "/api/v1/auth/login",
       description: "User login and token issuance",
       name: "VD.MOVS0001",
       lastModified: "2023-10-24T14:20:00",
@@ -15,7 +15,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "1-2",
       method: "POST",
-      path: "/api/v1/auth/logout",
+      tran: "/api/v1/auth/logout",
       description: "Invalidate current session",
       name: "VD.MOVS0002",
       lastModified: "2023-10-23T08:15:00",
@@ -24,7 +24,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "1-3",
       method: "GET",
-      path: "/api/v1/auth/me",
+      tran: "/api/v1/auth/me",
       description: "Get current user profile",
       name: "VD.MOVS0003",
       lastModified: "2023-10-22T16:45:00",
@@ -35,7 +35,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "2-1",
       method: "GET",
-      path: "/api/v1/products",
+      tran: "/api/v1/products",
       description: "Retrieve all available products in the catalog",
       name: "VD.MOVS0004",
       lastModified: "2023-10-24T14:20:00",
@@ -44,7 +44,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "2-2",
       method: "POST",
-      path: "/api/v1/products",
+      tran: "/api/v1/products",
       description: "Create a new product entry in the system",
       name: "VD.MOVS0005",
       lastModified: "2023-10-23T08:15:00",
@@ -53,7 +53,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "2-3",
       method: "PUT",
-      path: "/api/v1/orders/{id}",
+      tran: "/api/v1/orders/{id}",
       description: "Update order status or shipping details",
       name: "VD.MOVS0006",
       lastModified: "2023-10-21T16:45:00",
@@ -62,7 +62,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "2-4",
       method: "DELETE",
-      path: "/api/v1/user/{id}",
+      tran: "/api/v1/user/{id}",
       description: "Permanently remove user account and data",
       name: "VD.MOVS0007",
       lastModified: "2023-10-18T11:20:00",
@@ -73,7 +73,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "3-1",
       method: "GET",
-      path: "/api/v1/weather/current",
+      tran: "/api/v1/weather/current",
       description: "Get current weather for location",
       name: "VD.MOVS0008",
       lastModified: "2023-10-20T09:00:00",
@@ -82,7 +82,7 @@ export const mockEndpointsByProjectId: Record<string, ApiEndpoint[]> = {
     {
       id: "3-2",
       method: "GET",
-      path: "/api/v1/weather/forecast",
+      tran: "/api/v1/weather/forecast",
       description: "Get 5-day forecast",
       name: "VD.MOVS0009",
       lastModified: "2023-10-19T14:30:00",

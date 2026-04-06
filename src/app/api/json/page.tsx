@@ -9,7 +9,7 @@ import DropDown from "@/components/common/DropDown";
 import Input from "@/components/common/Input";
 import TextArea from "@/components/common/TextArea";
 import Navigation from "@/components/shared/Navigation";
-import NoticeModal from "@/components/shared/NoticeModal";
+import { NoticeModal } from "@/components/common/modals";
 
 // Libs
 import { getApiResponseItem, setStoredActiveApiResponse } from "@/libs/datadummy/api";

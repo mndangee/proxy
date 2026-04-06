@@ -12,12 +12,12 @@ const projects = {
   getRootPath: () => ipcRenderer.invoke("project-fs:getRootPath"),
   deleteFolder: (folderName: string) => ipcRenderer.invoke("project-fs:delete", folderName),
   listApis: (folderName: string) => ipcRenderer.invoke("project-fs:listApis", folderName),
-  addApi: (folderName: string, payload: { method: string; path: string; description: string; name: string }) =>
+  addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) =>
     ipcRenderer.invoke("project-fs:addApi", folderName, payload),
   updateApi: (
     folderName: string,
     apiId: string,
-    payload: { method: string; path: string; description: string; name: string },
+    payload: { method: string; tran: string; description: string; name: string },
   ) => ipcRenderer.invoke("project-fs:updateApi", folderName, apiId, payload),
   deleteApi: (folderName: string, apiId: string) => ipcRenderer.invoke("project-fs:deleteApi", folderName, apiId),
 };

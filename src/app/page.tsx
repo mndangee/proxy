@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 // Components
 import Header from "@/components/shared/Header";
-import NoticeModal from "@/components/shared/NoticeModal";
+import { NoticeModal } from "@/components/common/modals";
 import ProjectsList from "@/components/main/ProjectList";
 import ProjectTab, { type ProjectTabValue } from "@/components/main/ProjectTab";
 import HistoryList from "@/components/main/HistoryList";
