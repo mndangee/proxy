@@ -16,13 +16,13 @@ export function DropDownSelectedValue({ props, category, dropDownOpen, selectedT
 
   const dropDownDefaultSize: Record<DropDownSizeType, string> = {
     large: "h-10 px-5 py-4 typo-body-2-normal",
-    medium: "h-9 px-5 py-3 typo-body-2-normal",
+    medium: "h-[40px] px-5 typo-body-2-normal",
     small: "h-8  px-4 [6px] typo-caption-1",
   };
 
   const dropDownFluidSize: Record<DropDownSizeType, string> = {
     large: "h-12 px-5 py-4 typo-body-2-normal",
-    medium: "h-11 px-5 py-3 typo-body-2-normal",
+    medium: "h-[40px] px-5 typo-body-2-normal",
     small: "h-10 px-4 py-[6px] typo-caption-1",
   };
 
@@ -38,7 +38,7 @@ export function DropDownSelectedValue({ props, category, dropDownOpen, selectedT
         ${props.readonly && "!hover:outline-neutral-100 !cursor-no-drop"}
         ${props.error && "!hover:outline-negative-500 !bg-negative-50 !outline-negative-500"}
         ${dropDownOpen && (props.error ? "outline-2 !outline-negative-500" : "outline-2 !outline-neutral-500")}
-        ${props.backgroundClassName ? props.backgroundClassName : "bg-neutral-50"} cn-between cursor-pointer rounded-3 outline outline-1 outline-neutral-100 hover:outline-neutral-500
+        ${props.backgroundClassName ? props.backgroundClassName : "bg-background-white"} cn-between cursor-pointer rounded-3 outline outline-1 outline-neutral-100 hover:outline-neutral-500
       `}
     >
       <div className="flex-auto">

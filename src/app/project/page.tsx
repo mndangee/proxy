@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 // Assets
 import PlusIcon from "@/assets/svg/PlusIcon";
@@ -10,35 +10,48 @@ import PlusIcon from "@/assets/svg/PlusIcon";
 import Btn from "@/components/common/Btn";
 import ApiEndpointsTable from "@/components/project/ApiEndpointsTable";
 import NoApiEndpoints from "@/components/project/NoApiEndpoints";
+import RegisterApiModal from "@/components/main/RegisterApiModal";
 import Header from "@/components/shared/Header";
 import Navigation from "@/components/shared/Navigation";
-import NoticeModal from "@/components/shared/NoticeModal";
 
 // Libs
 import { getProjectBySlug, getProjectRouteSlug } from "@/libs/datadummy/home";
-import { exportProjectToFolder, requestOpenCreateProjectModal } from "@/libs/projects/store";
-import { getEndpointsForProject } from "@/libs/datadummy/project";
+import {
+  getEndpointsForProject,
+  PROJECT_APIS_CHANGED_EVENT,
+  refreshProjectApisFromDisk,
+} from "@/libs/projects/store";
+import type { ApiEndpoint } from "@/types";
 
 interface ProjectPageProps {
   projectSlug: string | null;
 }
 
 export default function ProjectPage({ projectSlug }: ProjectPageProps) {
-  const [noticeOpen, setNoticeOpen] = useState(false);
-  const [noticeMessage, setNoticeMessage] = useState("");
+  const [apiModalOpen, setApiModalOpen] = useState(false);
+  const [editingEndpoint, setEditingEndpoint] = useState<ApiEndpoint | null>(null);
+  const [listTick, setListTick] = useState(0);
 
-  const showNotice = (message: string) => {
-    setNoticeMessage(message);
-    setNoticeOpen(true);
-  };
+  const bumpList = useCallback(() => setListTick((t) => t + 1), []);
 
   const project = getProjectBySlug(projectSlug);
+
+  useEffect(() => {
+    if (!project?.id) return;
+    void refreshProjectApisFromDisk(project.id);
+  }, [project?.id]);
+
+  useEffect(() => {
+    const onApis = () => bumpList();
+    window.addEventListener(PROJECT_APIS_CHANGED_EVENT, onApis);
+    return () => window.removeEventListener(PROJECT_APIS_CHANGED_EVENT, onApis);
+  }, [bumpList]);
 
   if (!project) {
     return (
       <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
         <Navigation activeProjectSlug={null} onNewProject={() => (window.location.href = "/")} />
-        <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+        <div id="app-main" className="relative flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden">
           <div className="border-border-enabled border-b">
             <Header variant="sub" title="프로젝트" />
           </div>
@@ -50,33 +63,23 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
     );
   }
 
-  const endpoints = getEndpointsForProject(project.id);
+  const endpoints = useMemo(() => getEndpointsForProject(project.id), [project.id, listTick]);
   const currentProjectSlug = projectSlug ?? getProjectRouteSlug(project);
-
-  const handleExport = async () => {
-    const folder = project.folderName;
-    if (!folder) {
-      showNotice("이 프로젝트는 디스크 폴더 정보가 없습니다. Electron에서 만든 프로젝트만 보낼 수 있습니다.");
-      return;
-    }
-    const res = await exportProjectToFolder(folder);
-    if (!res.ok) {
-      if (res.error === "electron-only") showNotice("Electron 앱에서만 폴더로 보낼 수 있습니다.");
-      else if (res.error === "cancelled") return;
-      else if (res.error === "destination-exists") showNotice("선택한 위치에 같은 이름의 폴더가 이미 있습니다.");
-      else showNotice(`보내기에 실패했습니다. (${res.error ?? ""})`);
-      return;
-    }
-    showNotice(
-      `프로젝트 폴더를 복사했습니다.\n${res.path ?? ""}\n이 폴더를 압축하거나 통째로 공유하면 다른 PC에서 「프로젝트 가져오기」로 열 수 있습니다.`,
-    );
-  };
 
   return (
     <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
-      <NoticeModal isOpen={noticeOpen} onClose={() => setNoticeOpen(false)} message={noticeMessage} />
+      <RegisterApiModal
+        isOpen={apiModalOpen}
+        onClose={() => {
+          setApiModalOpen(false);
+          setEditingEndpoint(null);
+        }}
+        project={project}
+        onRegistered={bumpList}
+        initialEndpoint={editingEndpoint}
+      />
       <Navigation activeProjectSlug={currentProjectSlug} onNewProject={() => (window.location.href = "/")} />
-      <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div id="app-main" className="relative flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled border-b">
           <Header variant="sub" title={project.name} />
         </div>
@@ -85,15 +88,38 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
           <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
             <div className={`typo-title-2 text-label-normal font-bold`}>{project.name}</div>
             <div className="flex flex-wrap gap-3">
-              <Btn category="secondary" variant size="medium" width={160} onClick={() => void handleExport()}>
-                폴더로 보내기
-              </Btn>
-              <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={requestOpenCreateProjectModal} width={180}>
-                프로젝트 만들기
+              <Btn
+                category="primary"
+                size="medium"
+                startIcon={<PlusIcon />}
+                onClick={() => {
+                  setEditingEndpoint(null);
+                  setApiModalOpen(true);
+                }}
+                width={180}
+              >
+                API 등록하기
               </Btn>
             </div>
           </div>
-          {endpoints.length > 0 ? <ApiEndpointsTable endpoints={endpoints} /> : <NoApiEndpoints />}
+          {endpoints.length > 0 ? (
+            <ApiEndpointsTable
+              project={project}
+              endpoints={endpoints}
+              onListChange={bumpList}
+              onEdit={(row) => {
+                setEditingEndpoint(row);
+                setApiModalOpen(true);
+              }}
+            />
+          ) : (
+            <NoApiEndpoints
+              onRegisterApi={() => {
+                setEditingEndpoint(null);
+                setApiModalOpen(true);
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

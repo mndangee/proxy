@@ -10,8 +10,7 @@ import ApiResponseSection from "@/components/api/ApiResponseSection";
 
 // Libs
 import { getApiResponseGroups, getStoredActiveApiResponse, setStoredActiveApiResponse, type ApiResponseItem } from "@/libs/datadummy/api";
-import { getProjectForApiName } from "@/libs/datadummy/project";
-import { getProjectRouteSlug } from "@/libs/projects/store";
+import { getProjectForApiName, getProjectRouteSlug } from "@/libs/projects/store";
 
 interface ProjectApiPageProps {
   apiName: string;
@@ -55,7 +54,7 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
   return (
     <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
       <Navigation activeProjectSlug={activeProjectSlug} currentApiName={resolvedApiName} onNewProject={() => (window.location.href = "/")} />
-      <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div id="app-main" className="relative flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled border-b">
           <ApiExplorerHeader
             title={resolvedApiName}

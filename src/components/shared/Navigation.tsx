@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 // Assets
 import FillStarIcon from "@/assets/svg/FillStarIcon";
@@ -18,9 +18,17 @@ import Btn from "@/components/common/Btn";
 import useInput from "@/hooks/useInput";
 
 // Libs
-import { getEndpointsForProject, getProjectForApiName } from "@/libs/datadummy/project";
 import { getApiResponseGroups, getJsonEditorEntryHref, type ApiResponseItem } from "@/libs/datadummy/api";
-import { getProjectHref, getProjectRouteSlug, getStoredProjects, PROJECTS_CHANGED_EVENT, requestOpenCreateProjectModal } from "@/libs/projects/store";
+import {
+  getEndpointsForProject,
+  getProjectForApiName,
+  getProjectHref,
+  getProjectRouteSlug,
+  getStoredProjects,
+  PROJECT_APIS_CHANGED_EVENT,
+  PROJECTS_CHANGED_EVENT,
+  requestOpenCreateProjectModal,
+} from "@/libs/projects/store";
 
 // Types
 import type { Project } from "@/types";
@@ -83,6 +91,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const [navProjects, setNavProjects] = useState<Project[]>([]);
   /** 페이지 이동 없이 LNB 프로젝트 목록만 즐겨찾기로 좁힘 */
   const [favoritesOnlyInNav, setFavoritesOnlyInNav] = useState(false);
+  const [apisTick, setApisTick] = useState(0);
 
   const testInput = useInput();
   const pathname = typeof window !== "undefined" ? window.location.pathname : "";
@@ -91,7 +100,10 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const fallbackApiName = isApiDetailRoute ? decodeURIComponent(pathname.replace("/api/", "")) : null;
   const resolvedApiName = currentApiName ?? fallbackApiName;
   const currentApiProject = resolvedApiName ? getProjectForApiName(resolvedApiName) : null;
-  const apiEndpointItems = currentApiProject ? getEndpointsForProject(currentApiProject.id) : [];
+  const apiEndpointItems = useMemo(
+    () => (currentApiProject ? getEndpointsForProject(currentApiProject.id) : []),
+    [currentApiProject?.id, resolvedApiName, apisTick],
+  );
 
   const showProjectListInNav = !isApiJsonPage && !isApiDetailRoute;
   const hasFavoriteProjects = navProjects.some((p) => p.isFavorite);
@@ -102,6 +114,12 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
     load();
     window.addEventListener(PROJECTS_CHANGED_EVENT, load);
     return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, load);
+  }, []);
+
+  useEffect(() => {
+    const bump = () => setApisTick((t) => t + 1);
+    window.addEventListener(PROJECT_APIS_CHANGED_EVENT, bump);
+    return () => window.removeEventListener(PROJECT_APIS_CHANGED_EVENT, bump);
   }, []);
 
   return (
@@ -215,7 +233,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
           </div>
 
           {!isApiDetailRoute && !isApiJsonPage && (
-            <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={requestOpenCreateProjectModal} width={220}>
+            <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width={220}>
               프로젝트 생성하기
             </Btn>
           )}

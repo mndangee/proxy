@@ -138,6 +138,60 @@ async function hasProjectWithDisplayName(root: string, displayName: string): Pro
   return false;
 }
 
+/** `apis/index.json` 한 행 */
+export interface StoredApiEntry {
+  id: string;
+  method: string;
+  path: string;
+  description: string;
+  /** 내비·링크용 표시 이름 (예: `GET /api/v1/users`) */
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
+async function readApisIndex(projectRoot: string): Promise<StoredApiEntry[]> {
+  const fp = join(projectRoot, "apis", "index.json");
+  try {
+    const raw = await fs.readFile(fp, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const out: StoredApiEntry[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      if (typeof o.id !== "string" || typeof o.method !== "string") continue;
+      const pathTrim = typeof o.path === "string" ? o.path.trim() : "";
+      const methodUp = String(o.method).toUpperCase();
+      out.push({
+        id: o.id,
+        method: methodUp,
+        path: pathTrim,
+        description: typeof o.description === "string" ? o.description : "",
+        name:
+          typeof o.name === "string"
+            ? o.name
+            : pathTrim
+              ? `${methodUp} ${pathTrim}`
+              : methodUp,
+        createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
+        updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function writeApisIndex(projectRoot: string, items: StoredApiEntry[]): Promise<void> {
+  const fp = join(projectRoot, "apis", "index.json");
+  await fs.mkdir(join(projectRoot, "apis"), { recursive: true });
+  await fs.writeFile(fp, JSON.stringify(items, null, 2), "utf-8");
+}
+
 type LegacyRow = {
   id?: string;
   name?: string;
@@ -158,6 +212,10 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:migrateFromLegacy");
   ipcMain.removeHandler("project-fs:getRootPath");
   ipcMain.removeHandler("project-fs:delete");
+  ipcMain.removeHandler("project-fs:listApis");
+  ipcMain.removeHandler("project-fs:addApi");
+  ipcMain.removeHandler("project-fs:updateApi");
+  ipcMain.removeHandler("project-fs:deleteApi");
 
   ipcMain.handle("project-fs:list", async (): Promise<ProjectManifest[]> => {
     await ensureProjectsRoot();
@@ -368,6 +426,151 @@ export function registerProjectFsIpc(): void {
   });
 
   ipcMain.handle("project-fs:getRootPath", async () => getProjectsRoot());
+
+  ipcMain.handle("project-fs:listApis", async (_e, folderName: unknown) => {
+    const name = typeof folderName === "string" ? folderName.trim() : "";
+    if (!name || !isSafeProjectFolderName(name)) return [];
+    const root = getProjectsRoot();
+    const projectRoot = join(root, name);
+    const cur = await readManifest(projectRoot);
+    if (!cur) return [];
+    return readApisIndex(projectRoot);
+  });
+
+  ipcMain.handle("project-fs:addApi", async (_e, folderName: unknown, payload: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+
+    const p =
+      payload != null && typeof payload === "object"
+        ? (payload as { method?: unknown; path?: unknown; description?: unknown; name?: unknown })
+        : {};
+    const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
+    const pathStr = String(p.path ?? "").trim();
+    const description = String(p.description ?? "").trim();
+    const apiDisplayName = String(p.name ?? "").trim();
+
+    if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
+    if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
+    if (!description) return { ok: false as const, error: "empty-description" };
+
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    const items = await readApisIndex(projectRoot);
+    const normPath = pathStr;
+    if (items.some((x) => x.method === methodRaw && x.path.trim() === normPath)) {
+      return { ok: false as const, error: "duplicate-endpoint" };
+    }
+    if (items.some((x) => x.name.trim() === apiDisplayName)) {
+      return { ok: false as const, error: "duplicate-api-name" };
+    }
+
+    const now = new Date().toISOString();
+    const entry: StoredApiEntry = {
+      id: randomUUID(),
+      method: methodRaw,
+      path: normPath,
+      description,
+      name: apiDisplayName,
+      createdAt: now,
+      updatedAt: now,
+    };
+    items.push(entry);
+    await writeApisIndex(projectRoot, items);
+
+    const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+
+    return { ok: true as const, api: entry };
+  });
+
+  ipcMain.handle(
+    "project-fs:updateApi",
+    async (_e, folderName: unknown, apiId: unknown, payload: unknown) => {
+      const fname = typeof folderName === "string" ? folderName.trim() : "";
+      if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+
+      const id = typeof apiId === "string" ? apiId.trim() : "";
+      if (!id) return { ok: false as const, error: "api-not-found" };
+
+      const p =
+        payload != null && typeof payload === "object"
+          ? (payload as { method?: unknown; path?: unknown; description?: unknown; name?: unknown })
+          : {};
+      const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
+      const pathStr = String(p.path ?? "").trim();
+      const description = String(p.description ?? "").trim();
+      const apiDisplayName = String(p.name ?? "").trim();
+
+      if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
+      if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
+      if (!description) return { ok: false as const, error: "empty-description" };
+
+      const root = getProjectsRoot();
+      const projectRoot = join(root, fname);
+      const manifest = await readManifest(projectRoot);
+      if (!manifest) return { ok: false as const, error: "not-found" };
+
+      const items = await readApisIndex(projectRoot);
+      const idx = items.findIndex((x) => x.id === id);
+      if (idx < 0) return { ok: false as const, error: "api-not-found" };
+
+      const normPath = pathStr;
+      if (
+        items.some((x, i) => i !== idx && x.method === methodRaw && x.path.trim() === normPath)
+      ) {
+        return { ok: false as const, error: "duplicate-endpoint" };
+      }
+      if (items.some((x, i) => i !== idx && x.name.trim() === apiDisplayName)) {
+        return { ok: false as const, error: "duplicate-api-name" };
+      }
+
+      const now = new Date().toISOString();
+      const prev = items[idx];
+      const entry: StoredApiEntry = {
+        ...prev,
+        method: methodRaw,
+        path: normPath,
+        description,
+        name: apiDisplayName,
+        updatedAt: now,
+      };
+      items[idx] = entry;
+      await writeApisIndex(projectRoot, items);
+
+      const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+      await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+
+      return { ok: true as const, api: entry };
+    },
+  );
+
+  ipcMain.handle("project-fs:deleteApi", async (_e, folderName: unknown, apiId: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+
+    const id = typeof apiId === "string" ? apiId.trim() : "";
+    if (!id) return { ok: false as const, error: "api-not-found" };
+
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    const items = await readApisIndex(projectRoot);
+    const next = items.filter((x) => x.id !== id);
+    if (next.length === items.length) return { ok: false as const, error: "api-not-found" };
+
+    const now = new Date().toISOString();
+    await writeApisIndex(projectRoot, next);
+    const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+
+    return { ok: true as const };
+  });
 
   ipcMain.handle("project-fs:delete", async (_e, folderName: unknown) => {
     const name = typeof folderName === "string" ? folderName.trim() : "";

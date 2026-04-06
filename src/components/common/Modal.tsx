@@ -2,6 +2,7 @@
 import CloseIcon from "@/assets/svg/CloseIcon";
 
 // Internal
+import ModalMainPortal from "./ModalMainPortal";
 import ModalPortal from "./ModalPortal";
 
 type ModalSizeType = "small" | "medium";
@@ -17,6 +18,11 @@ export interface ICommonModalProps {
   size: ModalSizeType;
   /** 우측 상단 Close 버튼 유무 */
   showCloseBtn?: boolean;
+  /**
+   * true이면 `#app-main`이 있을 때 그 영역 기준 absolute 오버레이(내비 제외 가운데).
+   * 없으면 기존처럼 `#modal` + fixed.
+   */
+  anchorMain?: boolean;
 }
 
 const modalSize: Record<ModalSizeType, string> = {
@@ -24,11 +30,13 @@ const modalSize: Record<ModalSizeType, string> = {
   medium: "max-w-[560px]",
 };
 
-const ModalContents = (props: ICommonModalProps) => (
-  <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6">
+const ModalContents = (props: ICommonModalProps) => {
+  const overlay = props.anchorMain ? "absolute" : "fixed";
+  return (
+  <div className={`${overlay} inset-0 z-[1000] flex items-center justify-center p-6`}>
     <button
       type="button"
-      className="absolute inset-0 bg-black/70"
+      className={`${overlay} inset-0 bg-black/70`}
       onClick={props.onClose}
       aria-label="닫기"
     />
@@ -46,18 +54,25 @@ const ModalContents = (props: ICommonModalProps) => (
       )}
     </div>
   </div>
-);
+  );
+};
 
 export default function Modal(props: ICommonModalProps) {
   const isStorybook = typeof window !== "undefined" && window.self !== window.top;
+  const useMain =
+    Boolean(props.anchorMain) && typeof document !== "undefined" && document.getElementById("app-main") != null;
 
   return (
     props.isOpen &&
     (isStorybook ? (
-      <ModalContents {...props} />
+      <ModalContents {...props} anchorMain={false} />
+    ) : useMain ? (
+      <ModalMainPortal>
+        <ModalContents {...props} anchorMain />
+      </ModalMainPortal>
     ) : (
       <ModalPortal>
-        <ModalContents {...props} />
+        <ModalContents {...props} anchorMain={false} />
       </ModalPortal>
     ))
   );

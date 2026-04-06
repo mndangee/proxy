@@ -13,7 +13,7 @@ export function DropDownLabel({ className, ...props }: IDropDownProps) {
         <div className={`${props.error && "!text-negative-500"} ${className}`}>
           {props.label}
           {props.required && (
-            <span className={`${requiredTypeStyle[props.size]} ml-1 font-semibold text-negative-500`}>*</span>
+            <span className={`${requiredTypeStyle[props.size]} ml-1 font-semibold text-red-500`}>*</span>
           )}
         </div>
       )}

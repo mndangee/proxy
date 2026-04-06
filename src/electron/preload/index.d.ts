@@ -11,6 +11,16 @@ export interface ProjectManifest {
   folderName: string;
 }
 
+export interface StoredApiEntry {
+  id: string;
+  method: string;
+  path: string;
+  description: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectFsApi {
   list: () => Promise<ProjectManifest[]>;
   create: (payload: { name: string; description: string; isFavorite: boolean }) => Promise<
@@ -23,6 +33,17 @@ export interface ProjectFsApi {
   migrateFromLegacy: (legacy: unknown[]) => Promise<{ ok: true; count: number } | { ok: false; error: string }>;
   getRootPath: () => Promise<string>;
   deleteFolder: (folderName: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  listApis: (folderName: string) => Promise<StoredApiEntry[]>;
+  addApi: (
+    folderName: string,
+    payload: { method: string; path: string; description: string; name: string },
+  ) => Promise<{ ok: true; api: StoredApiEntry } | { ok: false; error: string }>;
+  updateApi: (
+    folderName: string,
+    apiId: string,
+    payload: { method: string; path: string; description: string; name: string },
+  ) => Promise<{ ok: true; api: StoredApiEntry } | { ok: false; error: string }>;
+  deleteApi: (folderName: string, apiId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 declare global {

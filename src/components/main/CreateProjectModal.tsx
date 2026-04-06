@@ -20,9 +20,11 @@ export interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreated?: () => void;
+  /** LNB에서 열 때 등: `#app-main` 기준 가운데 */
+  anchorMain?: boolean;
 }
 
-export default function CreateProjectModal({ isOpen, onClose, onCreated }: CreateProjectModalProps) {
+export default function CreateProjectModal({ isOpen, onClose, onCreated, anchorMain = false }: CreateProjectModalProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [favoriteCheckState, setFavoriteCheckState] = useState<checkBoxObjectType>({ [FAVORITE_CHECK_KEY]: false });
@@ -74,7 +76,7 @@ export default function CreateProjectModal({ isOpen, onClose, onCreated }: Creat
   return (
     <>
       <NoticeModal isOpen={noticeOpen} onClose={() => setNoticeOpen(false)} message={noticeMessage} />
-    <Modal isOpen={isOpen} onClose={handleClose} size="medium" showCloseBtn>
+    <Modal isOpen={isOpen} onClose={handleClose} size="medium" showCloseBtn anchorMain={anchorMain}>
       <div className="px-8 pt-12 pb-8">
         <h2 className="typo-title-3 text-label-normal font-bold">새 프로젝트</h2>
         <p className="typo-body-2-normal text-label-assistant mt-2">이름과 설명을 입력하고 저장하면 목록에 반영됩니다.</p>

@@ -12,13 +12,13 @@ export interface IDropDownOptionProps {
 export function DropDownOption({ props, children, category, dropDownOpen }: IDropDownOptionProps) {
   const dropDownDefaultSize: Record<DropDownSizeType, string> = {
     large: "top-10 max-h-[264px] [&>div]:h-10",
-    medium: "top-9 max-h-[220px] [&>div]:h-9",
+    medium: "top-[40px] max-h-[220px] [&>div]:h-[40px]",
     small: "top-8 max-h-[220px] [&>div]:h-9",
   };
 
   const dropDownFluidSize: Record<DropDownSizeType, string> = {
     large: "top-12 max-h-[264px] [&>div]:h-10",
-    medium: "top-11 max-h-[220px] [&>div]:h-9",
+    medium: "top-[40px] max-h-[220px] [&>div]:h-[40px]",
     small: "top-10 max-h-[220px] [&>div]:h-9",
   };
 
@@ -32,7 +32,7 @@ export function DropDownOption({ props, children, category, dropDownOpen }: IDro
       className={`
         ${dropDownOptionCategory[category]} 
         ${!dropDownOpen && "hidden"} 
-        absolute z-10 mt-2 w-full overflow-y-auto rounded-3 border-1 border-neutral-100 bg-white drop-shadow-[4px_4px_20px_rgba(40,42,50,0.08)]
+        absolute z-10 mt-2 w-full overflow-y-auto rounded-3 border-1 border-neutral-100 bg-background-white drop-shadow-[4px_4px_20px_rgba(40,42,50,0.08)]
       `}
     >
       {children}

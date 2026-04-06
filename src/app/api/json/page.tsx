@@ -13,7 +13,7 @@ import NoticeModal from "@/components/shared/NoticeModal";
 
 // Libs
 import { getApiResponseItem, setStoredActiveApiResponse } from "@/libs/datadummy/api";
-import { getProjectForApiName } from "@/libs/datadummy/project";
+import { getProjectForApiName } from "@/libs/projects/store";
 import { slugify } from "@/libs/datadummy/home";
 
 function escapeHtml(value: string) {
@@ -193,7 +193,7 @@ export default function ApiJsonPage() {
         onNewProject={() => (window.location.href = "/")}
       />
 
-      <div className="flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div id="app-main" className="relative flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled bg-background-white border-b px-6 py-6">
           <div className="mx-auto flex w-full max-w-[1600px] items-center">
             <div className="typo-title-2 text-label-normal font-bold">{isNewState ? sourceApiName || "New JSON Resource" : "VD.MADD0641"}</div>

@@ -5,9 +5,6 @@ import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 
 import { registerProjectFsIpc } from "./project-fs";
 
-/** `out/main` 구버전·미빌드로 실행돼도 창이 뜨기 전에 IPC가 반드시 잡히도록 선등록 */
-registerProjectFsIpc();
-
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -56,7 +53,7 @@ app.whenReady().then(() => {
   // IPC test
   ipcMain.on("ping", () => console.log("pong"));
 
-  /** 앱 준비 직후 한 번 더 등록(메인 번들/재시작 타이밍에 맞춤). removeHandler+handle 이라 중복 안전 */
+  /** IPC는 app.ready 이후에만 등록(Electron 버전에 따른 핸들러 유실 방지) */
   registerProjectFsIpc();
 
   createWindow();
