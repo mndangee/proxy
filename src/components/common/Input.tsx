@@ -1,6 +1,7 @@
 "use client";
 
 // React
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 type WidthUnitType = "px" | "%" | "em" | "vh";
@@ -28,6 +29,8 @@ export interface IInputProps {
   onFocus?: () => void;
   /** 키보드 포커스 아웃 이벤트 */
   onBlur?: () => void;
+  /** 인풋 오른쪽 접미사(단위 등), 필드 안에 표시 */
+  suffix?: ReactNode;
 }
 
 export default function Input({ size = "medium", ...args }: IInputProps) {
@@ -55,16 +58,25 @@ export default function Input({ size = "medium", ...args }: IInputProps) {
       style={{ width: inputWidth }}
     >
       <input
-        className={`${inputType[size]} !bg-background-white placeholder:text-label-assistant disabled:text-label-disabled w-full outline-none`}
+        className={`${inputType[size]} !bg-background-white placeholder:text-label-assistant disabled:text-label-disabled outline-none ${props.suffix != null ? "min-w-0 flex-1 !px-6 !pr-2" : "w-full"}`}
         placeholder={props.placeholder}
         disabled={props.disabled}
         value={props.value}
-        onFocus={() => setIsFocus(true)}
-        onBlur={() => setIsFocus(false)}
+        onFocus={() => {
+          setIsFocus(true);
+          props.onFocus?.();
+        }}
+        onBlur={() => {
+          setIsFocus(false);
+          props.onBlur?.();
+        }}
         onChange={props.onChange}
         onKeyDown={props.onKeyDown}
         onClick={(e) => e.stopPropagation()}
       />
+      {props.suffix != null ? (
+        <span className="typo-body-2-normal text-label-neutral shrink-0 pr-5 font-semibold select-none">{props.suffix}</span>
+      ) : null}
     </div>
   );
 }

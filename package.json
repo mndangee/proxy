@@ -12,6 +12,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false'",
     "licenses": "node scripts/generate-licenses.js",
+    "docs:data-guide-pdf": "npx --yes md-to-pdf docs/data-lifecycle-guide.md",
     "start": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite preview'",
     "dev": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite dev'",
     "build": "npm run typecheck && bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite build'",
@@ -24,6 +25,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "adm-zip": "^0.5.17",
     "electron-updater": "^6.3.9",
     "react-textarea-autosize": "^8.5.9"
   },
@@ -32,6 +34,7 @@
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@tailwindcss/vite": "^4.2.1",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.19.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",

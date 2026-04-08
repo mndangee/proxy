@@ -3,6 +3,8 @@ import { app, shell, BrowserWindow, ipcMain } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 
+import { registerProjectFsIpc } from "./project-fs";
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -50,6 +52,9 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on("ping", () => console.log("pong"));
+
+  /** IPC는 app.ready 이후에만 등록(Electron 버전에 따른 핸들러 유실 방지) */
+  registerProjectFsIpc();
 
   createWindow();
 

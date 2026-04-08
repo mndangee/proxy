@@ -3,7 +3,7 @@
 ## 소개
 
 - **Electron + React + TypeScript** 기반 데스크톱 애플리케이션입니다.
-- **프로젝트 관리**: 홈에서 프로젝트를 생성·목록 조회하며, 데이터는 브라우저 **localStorage**에 저장됩니다.
+- **프로젝트 관리**: 홈에서 프로젝트를 생성·목록 조회합니다. **Electron**에서는 사용자 데이터 폴더에 프로젝트를 저장하고, **브라우저만 쓸 때**는 **localStorage** 폴백을 씁니다(아래 **데이터 저장 방식**).
 - **API 탐색**: 프로젝트별 API 엔드포인트 목록, 응답 시나리오(로컬/테스트/에러) 선택, JSON 더미 편집(`/api/json`) 흐름을 지원합니다.
 - **UI**: 디자인 시스템 토큰(`bg-background-*`, `text-label-*`, `typo-*` 등)과 Tailwind CSS 4.x, 공통 컴포넌트(`Btn`, `Input`, `Modal` 등)를 사용합니다.
 
@@ -25,26 +25,78 @@
 | **프로젝트 상세 (`/project/:slug`)** | 프로젝트 메타·API 엔드포인트 테이블(목 데이터와 연동) |
 | **API 상세 (`/api/:apiName`)** | 응답 그룹 라디오, 활성 응답 표시, JSON 편집기로 이동 |
 | **JSON 편집 (`/api/json`)** | 쿼리(`apiName`, `type`, `responseValue` 등)로 리소스 편집,보내기·「응답으로 사용」 |
-| **내비게이션** | 프로젝트 목록·API 목록·JSON 편집 시 응답 트리, 홈/즐겨찾기 아이콘 |
+| **내비게이션 (LNB)** | 프로젝트 목록·API 엔드포인트·JSON 편집 응답 트리; 홈·즐겨찾기 필터·접기/펼치기 (아래 **사이드 내비게이션** 참고) |
 | **라이선스 (`/licenses`)** | 오픈소스 라이선스 목록 |
 | **디자인 시스템 (`/design-system`)** | 컴포넌트 샘플 |
 
-### 프로젝트 엔티티 (localStorage)
+### 사이드 내비게이션 (`Navigation.tsx`)
 
-`src/libs/projects/store.ts`에서 `proxy-app-projects-v1` 키로 배열을 저장합니다.
+`src/components/shared/Navigation.tsx` — 왼쪽 사이드바(LNB)입니다.
+
+- **접기/펼치기**: `ToggleNaviIcon` 버튼으로 너비 전환(펼침 약 280px / 접힘 좁은 열).
+- **홈**: `NavigationTopHomeIcon`으로 `/` 이동.
+- **즐겨찾기만 보기** (프로젝트 목록이 나올 때만 표시): 클릭 시 **페이지 이동 없이** LNB 프로젝트 목록만 즐겨찾기 항목으로 좁힘. 꺼져 있을 때는 외곽 별 `StarIcon`, 켜져 있을 때는 채운 별 `FillStarIcon`으로 표시.
+- **상단 아이콘 크기**: 펼침·접힘 모두에서 홈과 즐겨찾기 토글 별의 **표시 크기를 동일 계열로 맞춤** (코드상 홈 `18×18`px, 별 `22×22`px 등 Tailwind 고정 크기).
+- **프로젝트 행**: 각 링크 왼쪽에 즐겨찾기 여부에 따라 `StarIcon` / `FillStarIcon`(목록 행은 `h-6 w-6`).
+- **데이터**: `getStoredProjects()`로 목록 로드, `proxy-projects-changed` 이벤트로 갱신(`PROJECTS_CHANGED_EVENT` in `src/libs/projects/store.ts`).
+- **경로별 패널**:
+  - **홈 계열** (`/` 등): 검색 입력 + 프로젝트 목록 + **프로젝트 생성하기**(전역 모달).
+  - **`/api/:apiName`**: 해당 프로젝트의 API 엔드포인트로 JSON 편집 진입 링크.
+  - **`/api/json`**: `jsonEditorApiName` prop과 쿼리에 맞춰 로컬/테스트/에러 응답 그룹 네비.
+- **props**: `activeProjectSlug`, `currentApiName`, `jsonEditorApiName`, `onNewProject`(미사용 시 생략 가능).
+
+### 데이터 저장 방식
+
+구현 위치: **`src/libs/projects/store.ts`**, **`src/libs/datadummy/api.ts`** 등.
+
+#### 프로젝트 목록 (생성·즐겨찾기·삭제)
+
+| 환경 | 저장 위치 | 비고 |
+|------|-----------|------|
+| **Electron** (preload `window.api.projects` 또는 IPC `project-fs:*` 사용 가능) | **디스크** — 주석 기준 `userData/DataForge-projects` 하위, 프로젝트별 폴더·매니페스트 | 생성/즐겨찾기/삭제/가져오기·내보내기는 IPC로 처리 |
+| **그 외** (순수 브라우저 등) | **localStorage** 키 `proxy-app-projects-v1` — 프로젝트 객체 **JSON 배열** 전체를 직렬화해 저장 | 추가·수정 시 배열을 통째로 다시 저장 |
+
+#### 저장 경로 (디스크 · Finder)
+
+Electron에서는 **`app.getPath("userData")`** 아래에 **`DataForge-projects`** 폴더를 만들고, 프로젝트마다 **`{folderName}/`** 하위 디렉터리를 둡니다(구현: `src/electron/main/project-fs.ts`의 `getProjectsRoot()`).
+
+| 플랫폼 | `userData` 예시 (앱 이름에 따라 달라질 수 있음) | 프로젝트 루트 |
+|--------|-----------------------------------------------|----------------|
+| **macOS** | `~/Library/Application Support/proxy` — `electron-builder.yml`의 **`productName: proxy`** 기준 | `…/proxy/DataForge-projects/` |
+| **Windows** | `%APPDATA%\proxy` 근처( Electron 기본 규칙) | `…\proxy\DataForge-projects\` |
+| **Linux** | `~/.config/proxy` 근처( Electron 기본 규칙) | `…/proxy/DataForge-projects/` |
+
+- **한 프로젝트 폴더**: `{위 루트}/{folderName}/` — 내부에 **`project.json`**, **`apis/`** 등(레이아웃은 `src/libs/project-fs/layout.ts` 참고).
+- **macOS에서 Finder로 열기**: **이동 → 폴더로 이동…**(⌘⇧G)에 다음을 입력합니다.
+
+  `~/Library/Application Support/proxy/DataForge-projects`
+
+  개발/빌드 설정으로 앱 **표시 이름**이 바뀌면 `proxy` 대신 해당 이름의 `Application Support` 하위 폴더를 확인하세요. 정확한 루트는 런타임에 IPC **`project-fs:getRootPath`**(`getProjectsRootPath()` 호출)로도 확인할 수 있습니다.
+
+- **브라우저만 사용할 때** 프로젝트 목록은 **디스크 폴더가 아니라** 해당 출처(origin)의 **localStorage** `proxy-app-projects-v1`에만 있습니다(개발 서버 URL과 배포 URL이 다르면 서로 다른 저장소).
+
+**공통 동작**
+
+- 앱에서 쓰는 목록은 메모리 **`projectsCache`**에 두고, UI는 **`getStoredProjects()`**로 읽습니다. Electron 경로에서는 부팅 시 **`hydrateProjects()`**로 디스크에서 채웁니다.
+- **마이그레이션**: 디스크 API가 있고 디스크 목록이 비어 있을 때, 예전 **localStorage** `proxy-app-projects-v1`에 데이터가 있으면 **`migrateFromLegacy`**로 한 번 옮긴 뒤 해당 키를 비웁니다.
+- 저장된 뒤 **`notifyProjectsChanged()`** → 커스텀 이벤트 **`proxy-projects-changed`**(`PROJECTS_CHANGED_EVENT`)로 LNB·홈 카드 등이 갱신됩니다.
+- **`open-create-project-modal`** 이벤트: `requestOpenCreateProjectModal()` 호출 시 전역 프로젝트 생성 모달 오픈.
+
+**프로젝트 레코드 필드** (타입 `Project`)
 
 - `id`, `name`, `description`, `createdAt`, `updatedAt`(ISO 8601), `isFavorite`
+- Electron·디스크 사용 시 **`folderName`**(슬러그형 폴더명 등)이 함께 옵니다.
 
-브라우저 이벤트:
+#### API별 “현재 선택된 응답” (탐색 UI 상태)
 
-- `proxy-projects-changed` — 목록·LNB 등 갱신용
-- `open-create-project-modal` — 프로젝트 생성 모달 오픈(`requestOpenCreateProjectModal()`)
+- **`src/libs/datadummy/api.ts`**: 응답 시나리오 **목록(로컬/테스트/에러)** 자체는 **코드에 정의된 목 데이터**입니다.
+- 사용자가 API 화면에서 고른 **활성 응답**은 **localStorage** 키 **`active-api-response:${apiName}`** 에 JSON으로 저장됩니다(`getStoredActiveApiResponse` / `setStoredActiveApiResponse`). JSON 편집기 진입 URL(`getJsonEditorEntryHref`)도 이 값을 참고합니다.
 
-### 목 데이터 (API·엔드포인트)
+#### 그 외 목 데이터
 
-- `src/libs/datadummy/api.ts` — API별 응답 그룹, 활성 응답 localStorage 연동
-- `src/libs/datadummy/project.ts` — 프로젝트 ID별 엔드포인트 목록(저장된 프로젝트 ID와 매칭 시 사용)
-- `src/libs/datadummy/home.ts` — 활동 목(`mockActivities`) 등, `slugify`는 `@/libs/slugify`로 re-export
+- `src/libs/datadummy/project.ts` — 프로젝트 **ID**별 API 엔드포인트 목록(저장소에 있는 프로젝트 `id`와 맞출 때 사용)
+- `src/libs/datadummy/home.ts` — 홈 활동 목(`mockActivities`) 등
+- `slugify`: `@/libs/slugify`
 
 ## 폴더 구조
 
@@ -71,7 +123,7 @@
 │   │   ├── project/          # ApiEndpointsTable, NoApiEndpoints
 │   │   └── providers/        # GlobalCreateProjectModal
 │   ├── libs
-│   │   ├── projects/store.ts # 프로젝트 localStorage·이벤트
+│   │   ├── projects/store.ts # 프로젝트 디스크(Electron)·localStorage 폴백·이벤트
 │   │   ├── datadummy/        # API·엔드포인트·활동 목 데이터
 │   │   └── slugify.ts
 │   ├── types/index.ts        # Project, ApiEndpoint, Activity 등
@@ -159,7 +211,12 @@ npm run typecheck
 npm run lint
 npm run format
 npm run licenses
+npm run docs:data-guide-pdf   # docs/data-lifecycle-guide.md → PDF (Chromium 기반, 최초 1회 다운로드)
 ```
+
+## 문서
+
+- **`docs/data-lifecycle-guide.md`** — 프로젝트 데이터 **생성·저장·삭제** 흐름을 코드 파일/함수 단위로 정리한 가이드. PDF로 보려면 위 `docs:data-guide-pdf` 또는 문서 맨 아래 **「PDF로 보기」** 절 참고.
 
 ## 라이선스 페이지
 
@@ -169,5 +226,5 @@ npm run licenses
 ## 주의 사항
 
 1. **Node 버전**: 네이티브 바인딩 오류 시 Node 버전 확인 후 `node_modules` 재설치를 시도하세요.
-2. **프로젝트 데이터**: localStorage를 비우면 저장된 프로젝트가 사라집니다. 백업이 필요하면 별도 동기화 로직을 추가해야 합니다.
+2. **프로젝트 데이터**: 브라우저만 사용할 때는 **localStorage** `proxy-app-projects-v1`을 지우면 목록이 사라집니다. **Electron**에서는 사용자 데이터 폴더의 프로젝트 디렉터리를 지워야 합니다. 백업·동기화는 앱에 내장되어 있지 않으면 별도 처리가 필요합니다.
 3. **라이선스 목록**: 의존성 변경 후 `npm run licenses`를 다시 실행하세요.

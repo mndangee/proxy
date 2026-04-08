@@ -45,6 +45,7 @@ export default function Btn({ category = "primary", size = "medium", ...props }:
 
   return (
     <button
+      type="button"
       className={`${props.variant ? variantCategory[category] : btnCategory[category]} ${btnSize[size]} ${props.className ?? ""} cn-center rounded-3 cursor-pointer font-medium disabled:cursor-no-drop disabled:opacity-50`}
       style={{ width: btnWidth }}
       onClick={props.onClick}

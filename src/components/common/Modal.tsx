@@ -2,6 +2,7 @@
 import CloseIcon from "@/assets/svg/CloseIcon";
 
 // Internal
+import ModalMainPortal from "./ModalMainPortal";
 import ModalPortal from "./ModalPortal";
 
 type ModalSizeType = "small" | "medium";
@@ -17,37 +18,61 @@ export interface ICommonModalProps {
   size: ModalSizeType;
   /** 우측 상단 Close 버튼 유무 */
   showCloseBtn?: boolean;
+  /**
+   * true이면 `#app-main`이 있을 때 그 영역 기준 absolute 오버레이(내비 제외 가운데).
+   * 없으면 기존처럼 `#modal` + fixed.
+   */
+  anchorMain?: boolean;
 }
 
 const modalSize: Record<ModalSizeType, string> = {
-  small: "w-[400px]",
-  medium: "w-[560px]",
+  small: "max-w-[400px]",
+  medium: "max-w-[560px]",
 };
 
-const ModalContents = (props: ICommonModalProps) => (
-  <>
-    <div className="fixed top-0 left-0 h-full w-full bg-black opacity-70" onClick={props.onClose}></div>
-    <div className={`${modalSize[props.size]} rounded-4 fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white`}>
+const ModalContents = (props: ICommonModalProps) => {
+  const overlay = props.anchorMain ? "absolute" : "fixed";
+  return (
+  <div className={`${overlay} inset-0 z-[1000] flex items-center justify-center p-6`}>
+    <button
+      type="button"
+      className={`${overlay} inset-0 bg-black/70`}
+      onClick={props.onClose}
+      aria-label="닫기"
+    />
+    <div
+      role="dialog"
+      aria-modal="true"
+      className={`${modalSize[props.size]} border-border-enabled relative z-[1] w-full overflow-y-auto rounded-4 border bg-background-white shadow-lg`}
+      onClick={(e) => e.stopPropagation()}
+    >
       {props.children}
       {props.showCloseBtn && (
-        <div className="absolute top-6 right-6 cursor-pointer" onClick={props.onClose}>
+        <button type="button" className="absolute top-6 right-6 cursor-pointer rounded p-1 text-label-assistant hover:bg-background-secondary-weak hover:text-label-neutral" onClick={props.onClose} aria-label="닫기">
           <CloseIcon />
-        </div>
+        </button>
       )}
     </div>
-  </>
-);
+  </div>
+  );
+};
 
 export default function Modal(props: ICommonModalProps) {
   const isStorybook = typeof window !== "undefined" && window.self !== window.top;
+  const useMain =
+    Boolean(props.anchorMain) && typeof document !== "undefined" && document.getElementById("app-main") != null;
 
   return (
     props.isOpen &&
     (isStorybook ? (
-      <ModalContents {...props} />
+      <ModalContents {...props} anchorMain={false} />
+    ) : useMain ? (
+      <ModalMainPortal>
+        <ModalContents {...props} anchorMain />
+      </ModalMainPortal>
     ) : (
       <ModalPortal>
-        <ModalContents {...props} />
+        <ModalContents {...props} anchorMain={false} />
       </ModalPortal>
     ))
   );
