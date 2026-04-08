@@ -15,10 +15,9 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/electron/renderer/*"],
-      "@/*": ["src/*"]
+      "@renderer/*": ["./src/electron/renderer/*"],
+      "@/*": ["./src/*"]
     }
   }
 }

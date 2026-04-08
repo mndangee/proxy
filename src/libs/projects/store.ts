@@ -1,4 +1,4 @@
-import type { ApiEndpoint, Project } from "@/types";
+import type { ApiEndpoint, AppProxyConfig, LinkedClientEntry, Project } from "@/types";
 
 import { mockEndpointsByProjectId } from "@/libs/datadummy/project";
 import { slugify } from "@/libs/slugify";
@@ -8,7 +8,88 @@ const LEGACY_STORAGE_KEY = "proxy-app-projects-v1";
 /** Electron 미사용(브라우저) 시 프로젝트별 API 목록 — `apis/index.json`과 동형 row */
 const BROWSER_APIS_STORAGE_KEY = "proxy-app-project-apis-v1";
 
+/** API 상세 화면에서 설정하는 응답 지연(ms), 표시 이름(apiName) 기준 */
+const BROWSER_API_LATENCY_STORAGE_KEY = "proxy-app-api-latency-ms-v1";
+
 const BROWSER_API_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
+const BROWSER_APP_PROXY_CONFIG_KEY = "proxy-app-config-v1";
+const BROWSER_PROJECT_LINKED_CLIENTS_KEY = "proxy-project-linked-clients-v1";
+const APP_PROXY_CONFIG_FILE_VERSION = 1;
+const DEFAULT_PROXY_SERVER_PORT = 4780;
+
+function defaultAppProxyConfig(): AppProxyConfig {
+  return {
+    version: APP_PROXY_CONFIG_FILE_VERSION,
+    proxyServer: { port: DEFAULT_PROXY_SERVER_PORT, enabled: false },
+  };
+}
+
+function coerceLinkedClientsLocal(raw: unknown): LinkedClientEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: LinkedClientEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id.trim() : "";
+    const label = typeof o.label === "string" ? o.label.trim() : "";
+    if (!id || !label) continue;
+    const allowedOrigins = Array.isArray(o.allowedOrigins)
+      ? o.allowedOrigins.filter((x): x is string => typeof x === "string").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const notesRaw = typeof o.notes === "string" ? o.notes.trim() : "";
+    out.push({ id, label, allowedOrigins, ...(notesRaw ? { notes: notesRaw } : {}) });
+  }
+  return out.length ? out : undefined;
+}
+
+function readBrowserAppProxyConfig(): AppProxyConfig {
+  if (typeof window === "undefined") return defaultAppProxyConfig();
+  try {
+    const raw = window.localStorage.getItem(BROWSER_APP_PROXY_CONFIG_KEY);
+    if (!raw) return defaultAppProxyConfig();
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object") return defaultAppProxyConfig();
+    const o = data as Record<string, unknown>;
+    if (o.version !== APP_PROXY_CONFIG_FILE_VERSION) return defaultAppProxyConfig();
+    const ps = o.proxyServer;
+    if (!ps || typeof ps !== "object") return defaultAppProxyConfig();
+    const p = ps as Record<string, unknown>;
+    const port = typeof p.port === "number" && Number.isFinite(p.port) ? Math.floor(p.port) : DEFAULT_PROXY_SERVER_PORT;
+    const enabled = Boolean(p.enabled);
+    return { version: APP_PROXY_CONFIG_FILE_VERSION, proxyServer: { port: Math.min(65535, Math.max(1, port)), enabled } };
+  } catch {
+    return defaultAppProxyConfig();
+  }
+}
+
+function writeBrowserAppProxyConfig(config: AppProxyConfig) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BROWSER_APP_PROXY_CONFIG_KEY, JSON.stringify(config));
+}
+
+function readBrowserLinkedClientsMap(): Record<string, LinkedClientEntry[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(BROWSER_PROJECT_LINKED_CLIENTS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, LinkedClientEntry[]> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const arr = coerceLinkedClientsLocal(v);
+      if (arr?.length) out[k] = arr;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeBrowserLinkedClientsMap(map: Record<string, LinkedClientEntry[]>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BROWSER_PROJECT_LINKED_CLIENTS_KEY, JSON.stringify(map));
+}
 
 export const PROJECTS_CHANGED_EVENT = "proxy-projects-changed";
 
@@ -24,8 +105,30 @@ const diskEndpointsCache: Record<string, ApiEndpoint[]> = {};
 
 export const PROJECT_APIS_CHANGED_EVENT = "proxy-project-apis-changed";
 
+/** API별 저장 응답(JSON 편집기) 갱신 시 — 상세·섹션 목록 리프레시용 */
+export const PROJECT_API_RESPONSES_CHANGED_EVENT = "proxy-project-api-responses-changed";
+
+export type SavedApiResponseEditorType = "default" | "test" | "error";
+
+/** `apis/responses-store.json` 행 (IPC·브라우저 저장 공통) */
+export interface SavedApiResponseRow {
+  id: string;
+  value: string;
+  label: string;
+  description: string;
+  editorType: SavedApiResponseEditorType;
+  configuration: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** `hydrateProjects` 동시 호출 시 한 번만 디스크/마이그레이션 수행 */
 let hydrateInFlight: Promise<void> | null = null;
+
+const BROWSER_API_RESPONSES_STORAGE_KEY = "proxy-app-api-responses-v1";
+
+/** projectId → apiName(api 표시 이름) → 저장된 응답 목록 */
+const savedResponsesCache: Record<string, Record<string, SavedApiResponseRow[]>> = {};
 
 /** preload `window.api.projects` 또는 `window.electron.ipcRenderer.invoke` 로 동일 IPC 사용 */
 interface ProjectsDiskApi {
@@ -40,12 +143,21 @@ interface ProjectsDiskApi {
   deleteFolder: (folderName: string) => Promise<unknown>;
   listApis: (folderName: string) => Promise<unknown>;
   addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
-  updateApi: (
-    folderName: string,
-    apiId: string,
-    payload: { method: string; tran: string; description: string; name: string },
-  ) => Promise<unknown>;
+  updateApi: (folderName: string, apiId: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
   deleteApi: (folderName: string, apiId: string) => Promise<unknown>;
+  getResponsesStore: (folderName: string) => Promise<unknown>;
+  upsertApiResponse: (
+    folderName: string,
+    apiName: string,
+    payload: {
+      value: string | null;
+      label: string;
+      description: string;
+      editorType: string;
+      configuration: string;
+    },
+  ) => Promise<unknown>;
+  deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<unknown>;
 }
 
 function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
@@ -64,7 +176,13 @@ function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
     typeof p.listApis === "function" &&
     typeof p.addApi === "function" &&
     typeof p.updateApi === "function" &&
-    typeof p.deleteApi === "function"
+    typeof p.deleteApi === "function" &&
+    typeof p.getResponsesStore === "function" &&
+    typeof p.upsertApiResponse === "function" &&
+    typeof p.deleteApiResponse === "function" &&
+    typeof p.getAppProxyConfig === "function" &&
+    typeof p.setAppProxyConfig === "function" &&
+    typeof p.setLinkedClients === "function"
   );
 }
 
@@ -90,6 +208,12 @@ function getProjectsApi(): ProjectsDiskApi | null {
     addApi: (folderName, payload) => ipc.invoke("project-fs:addApi", folderName, payload),
     updateApi: (folderName, apiId, payload) => ipc.invoke("project-fs:updateApi", folderName, apiId, payload),
     deleteApi: (folderName, apiId) => ipc.invoke("project-fs:deleteApi", folderName, apiId),
+    getResponsesStore: (folderName) => ipc.invoke("project-fs:getResponsesStore", folderName),
+    upsertApiResponse: (folderName, apiName, payload) => ipc.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
+    deleteApiResponse: (folderName, apiName, responseValue) => ipc.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
+    getAppProxyConfig: () => ipc.invoke("project-fs:getAppProxyConfig"),
+    setAppProxyConfig: (partial) => ipc.invoke("project-fs:setAppProxyConfig", partial),
+    setLinkedClients: (payload) => ipc.invoke("project-fs:setLinkedClients", payload),
   };
 }
 
@@ -125,6 +249,7 @@ type ManifestLike = {
   updatedAt: string;
   isFavorite: boolean;
   folderName: string;
+  linkedClients?: LinkedClientEntry[];
 };
 
 function manifestToProject(m: ManifestLike): Project {
@@ -136,6 +261,7 @@ function manifestToProject(m: ManifestLike): Project {
     updatedAt: m.updatedAt,
     isFavorite: m.isFavorite,
     folderName: m.folderName,
+    ...(m.linkedClients?.length ? { linkedClients: m.linkedClients } : {}),
   };
 }
 
@@ -268,6 +394,346 @@ export function notifyProjectApisChanged() {
   window.dispatchEvent(new CustomEvent(PROJECT_APIS_CHANGED_EVENT));
 }
 
+function newSavedResponseRowId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `saved-${crypto.randomUUID()}`;
+  return `saved-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function coerceSavedResponseRow(o: unknown): SavedApiResponseRow | null {
+  if (!o || typeof o !== "object") return null;
+  const r = o as Record<string, unknown>;
+  if (typeof r.value !== "string" || typeof r.label !== "string" || typeof r.configuration !== "string") return null;
+  const ed = String(r.editorType ?? "default").toLowerCase();
+  const editorType: SavedApiResponseEditorType = ed === "test" ? "test" : ed === "error" ? "error" : "default";
+  const v = r.value;
+  return {
+    id: typeof r.id === "string" ? r.id : v,
+    value: v,
+    label: r.label,
+    description: typeof r.description === "string" ? r.description : "",
+    editorType,
+    configuration: r.configuration,
+    createdAt: typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString(),
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : new Date().toISOString(),
+  };
+}
+
+function normalizeResponsesByApiName(raw: unknown): Record<string, SavedApiResponseRow[]> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, SavedApiResponseRow[]> = {};
+  for (const [apiKey, rows] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(rows)) continue;
+    const list = rows.map((x) => coerceSavedResponseRow(x)).filter((x): x is SavedApiResponseRow => x != null);
+    if (list.length) out[apiKey] = list;
+  }
+  return out;
+}
+
+function readAllBrowserResponsesMap(): Record<string, Record<string, SavedApiResponseRow[]>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(BROWSER_API_RESPONSES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const top = parsed as Record<string, unknown>;
+    const out: Record<string, Record<string, SavedApiResponseRow[]>> = {};
+    for (const [projectId, inner] of Object.entries(top)) {
+      if (!inner || typeof inner !== "object" || Array.isArray(inner)) continue;
+      out[projectId] = normalizeResponsesByApiName(inner);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeAllBrowserResponsesMap(map: Record<string, Record<string, SavedApiResponseRow[]>>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BROWSER_API_RESPONSES_STORAGE_KEY, JSON.stringify(map));
+}
+
+function removeBrowserSavedResponsesForProject(projectId: string) {
+  const all = readAllBrowserResponsesMap();
+  delete all[projectId];
+  writeAllBrowserResponsesMap(all);
+  delete savedResponsesCache[projectId];
+}
+
+export function notifySavedApiResponsesChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(PROJECT_API_RESPONSES_CHANGED_EVENT));
+}
+
+/** `apiName`(API 표시 이름) 기준 저장된 응답 JSON 목록 — UI 목록 병합용 */
+export function getSavedApiResponsesForApi(apiName: string): SavedApiResponseRow[] {
+  const key = apiName.trim();
+  if (!key) return [];
+  const project = getProjectForApiName(key);
+  if (!project) return [];
+  return savedResponsesCache[project.id]?.[key] ?? [];
+}
+
+function parseActivityTimeMs(isoLike: string | undefined): number {
+  if (!isoLike?.trim()) return 0;
+  const t = new Date(isoLike).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/** 메인 화면 등: API 메타·저장 응답 갱신 시각 기준 최근 수정 API (apiName 중복 시 더 최근 활동 1건) */
+export interface RecentModifiedApiItem {
+  projectId: string;
+  projectName: string;
+  apiName: string;
+  /** API 등록 시 설명 (없으면 빈 문자열) */
+  description: string;
+  method: string;
+  tran: string;
+  lastActivityAt: string;
+}
+
+export function getRecentModifiedApis(limit: number): RecentModifiedApiItem[] {
+  const cap = Math.max(1, Math.min(100, Math.floor(limit)));
+  const projects = getStoredProjects();
+  const candidates: RecentModifiedApiItem[] = [];
+
+  for (const p of projects) {
+    const endpoints = getEndpointsForProject(p.id);
+    for (const e of endpoints) {
+      const nameKey = e.name.trim();
+      if (!nameKey) continue;
+      const rows = savedResponsesCache[p.id]?.[nameKey] ?? [];
+      let latestMs = 0;
+      for (const r of rows) {
+        latestMs = Math.max(latestMs, parseActivityTimeMs(r.updatedAt), parseActivityTimeMs(r.createdAt));
+      }
+      const epMs = Math.max(parseActivityTimeMs(e.updatedAt), parseActivityTimeMs(e.lastModified));
+      const activityMs = Math.max(latestMs, epMs);
+      if (activityMs <= 0) continue;
+
+      candidates.push({
+        projectId: p.id,
+        projectName: p.name,
+        apiName: e.name,
+        description: e.description?.trim() ?? "",
+        method: e.method,
+        tran: e.tran,
+        lastActivityAt: new Date(activityMs).toISOString(),
+      });
+    }
+  }
+
+  candidates.sort((a, b) => parseActivityTimeMs(b.lastActivityAt) - parseActivityTimeMs(a.lastActivityAt));
+
+  const seenName = new Set<string>();
+  const out: RecentModifiedApiItem[] = [];
+  for (const c of candidates) {
+    const k = c.apiName.trim();
+    if (seenName.has(k)) continue;
+    seenName.add(k);
+    out.push(c);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+export async function refreshSavedResponsesFromDisk(projectId: string): Promise<void> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) {
+    delete savedResponsesCache[projectId];
+    notifySavedApiResponsesChanged();
+    return;
+  }
+
+  const disk = getProjectsApi();
+  if (!disk) {
+    const all = readAllBrowserResponsesMap();
+    savedResponsesCache[projectId] = all[projectId] ?? {};
+    notifySavedApiResponsesChanged();
+    return;
+  }
+
+  const folder = p.folderName?.trim();
+  if (!folder) {
+    delete savedResponsesCache[projectId];
+    notifySavedApiResponsesChanged();
+    return;
+  }
+  try {
+    const raw = (await disk.getResponsesStore(folder)) as { version?: number; byApiName?: unknown };
+    savedResponsesCache[projectId] = normalizeResponsesByApiName(raw?.byApiName ?? {});
+  } catch {
+    savedResponsesCache[projectId] = {};
+  }
+  notifySavedApiResponsesChanged();
+}
+
+export function formatSaveApiResponseUserError(code: string): string {
+  const ko: Record<string, string> = {
+    "not-found": "프로젝트를 찾을 수 없습니다.",
+    "no-folder": "프로젝트 폴더 정보가 없어 저장할 수 없습니다.",
+    "invalid-folder": "프로젝트를 찾을 수 없습니다.",
+    "empty-api-name": "API 이름이 없습니다.",
+    "save-failed": "응답을 저장하지 못했습니다.",
+    "ipc-not-registered": "저장 기능이 연결되지 않았습니다. 앱을 다시 실행해 주세요.",
+    "empty-value": "삭제할 응답이 지정되지 않았습니다.",
+    "response-not-found": "삭제할 응답을 찾을 수 없습니다.",
+    "delete-failed": "응답을 삭제하지 못했습니다.",
+  };
+  return ko[code] ?? `요청을 처리할 수 없습니다. (${code})`;
+}
+
+export async function upsertSavedApiResponse(
+  projectId: string,
+  apiName: string,
+  input: {
+    value: string | null;
+    label: string;
+    description: string;
+    editorType: SavedApiResponseEditorType;
+    configuration: string;
+  },
+): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
+  const apiKey = apiName.trim();
+  if (!apiKey) return { ok: false, error: "empty-api-name" };
+
+  const disk = getProjectsApi();
+  const now = new Date().toISOString();
+
+  if (!disk) {
+    const all = readAllBrowserResponsesMap();
+    const proj = { ...(all[projectId] ?? {}) };
+    const list = [...(proj[apiKey] ?? [])];
+    const existing = input.value?.trim() || null;
+    let outValue: string;
+
+    if (existing) {
+      const idx = list.findIndex((r) => r.value === existing);
+      if (idx >= 0) {
+        list[idx] = {
+          ...list[idx],
+          label: input.label.trim() || apiKey,
+          description: input.description.trim(),
+          editorType: input.editorType,
+          configuration: input.configuration,
+          updatedAt: now,
+        };
+        outValue = list[idx].value;
+      } else {
+        outValue = newSavedResponseRowId();
+        list.push({
+          id: outValue,
+          value: outValue,
+          label: input.label.trim() || apiKey,
+          description: input.description.trim(),
+          editorType: input.editorType,
+          configuration: input.configuration,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    } else {
+      outValue = newSavedResponseRowId();
+      list.push({
+        id: outValue,
+        value: outValue,
+        label: input.label.trim() || apiKey,
+        description: input.description.trim(),
+        editorType: input.editorType,
+        configuration: input.configuration,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    proj[apiKey] = list;
+    all[projectId] = proj;
+    writeAllBrowserResponsesMap(all);
+    savedResponsesCache[projectId] = proj;
+    notifySavedApiResponsesChanged();
+    return { ok: true, value: outValue };
+  }
+
+  const folder = p.folderName?.trim();
+  if (!folder) return { ok: false, error: "no-folder" };
+
+  try {
+    const raw = await disk.upsertApiResponse(folder, apiKey, {
+      value: input.value,
+      label: input.label.trim() || apiKey,
+      description: input.description.trim(),
+      editorType: input.editorType,
+      configuration: input.configuration,
+    });
+    const res = raw as { ok?: boolean; value?: string; error?: string };
+    if (!res.ok) {
+      const err = res.error ?? "save-failed";
+      if (/no handler registered/i.test(String(err))) return { ok: false, error: "ipc-not-registered" };
+      return { ok: false, error: err };
+    }
+    await refreshSavedResponsesFromDisk(projectId);
+    return { ok: true, value: String(res.value ?? "") };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/no handler registered/i.test(msg)) return { ok: false, error: "ipc-not-registered" };
+    return { ok: false, error: msg };
+  }
+}
+
+export async function deleteSavedApiResponse(projectId: string, apiName: string, responseValue: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
+  const apiKey = apiName.trim();
+  if (!apiKey) return { ok: false, error: "empty-api-name" };
+
+  const val = responseValue.trim();
+  if (!val) return { ok: false, error: "empty-value" };
+
+  const disk = getProjectsApi();
+
+  if (!disk) {
+    const all = readAllBrowserResponsesMap();
+    const proj = { ...(all[projectId] ?? {}) };
+    const list = [...(proj[apiKey] ?? [])];
+    const idx = list.findIndex((r) => r.value === val);
+    if (idx < 0) return { ok: false, error: "response-not-found" };
+    list.splice(idx, 1);
+    if (list.length) proj[apiKey] = list;
+    else delete proj[apiKey];
+    all[projectId] = proj;
+    writeAllBrowserResponsesMap(all);
+    savedResponsesCache[projectId] = proj;
+    notifySavedApiResponsesChanged();
+    return { ok: true };
+  }
+
+  const folder = p.folderName?.trim();
+  if (!folder) return { ok: false, error: "no-folder" };
+
+  try {
+    if (typeof disk.deleteApiResponse !== "function") {
+      return { ok: false, error: "ipc-not-registered" };
+    }
+    const raw = await disk.deleteApiResponse(folder, apiKey, val);
+    const res = raw as { ok?: boolean; error?: string };
+    if (!res.ok) {
+      const err = res.error ?? "delete-failed";
+      if (/no handler registered/i.test(String(err))) return { ok: false, error: "ipc-not-registered" };
+      return { ok: false, error: err };
+    }
+    await refreshSavedResponsesFromDisk(projectId);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/no handler registered/i.test(msg)) return { ok: false, error: "ipc-not-registered" };
+    return { ok: false, error: msg };
+  }
+}
+
 /** 디스크·브라우저 저장 API + 데모(mock) ID 목록 */
 export function getEndpointsForProject(projectId: string): ApiEndpoint[] {
   if (Object.prototype.hasOwnProperty.call(diskEndpointsCache, projectId)) {
@@ -301,6 +767,7 @@ export async function refreshProjectApisFromDisk(projectId: string): Promise<voi
   if (!disk) {
     const rows = readBrowserApisRows(projectId);
     diskEndpointsCache[projectId] = rows.map(diskRowToEndpoint);
+    await refreshSavedResponsesFromDisk(projectId);
     notifyProjectApisChanged();
     return;
   }
@@ -309,17 +776,22 @@ export async function refreshProjectApisFromDisk(projectId: string): Promise<voi
   const folder = p?.folderName?.trim();
   if (!folder) {
     delete diskEndpointsCache[projectId];
+    await refreshSavedResponsesFromDisk(projectId);
     notifyProjectApisChanged();
     return;
   }
   try {
     const raw = (await disk.listApis(folder)) as unknown;
     diskEndpointsCache[projectId] = Array.isArray(raw)
-      ? raw.map((item) => coerceDiskApiRow(item)).filter((x): x is DiskApiRow => x != null).map(diskRowToEndpoint)
+      ? raw
+          .map((item) => coerceDiskApiRow(item))
+          .filter((x): x is DiskApiRow => x != null)
+          .map(diskRowToEndpoint)
       : [];
   } catch {
     diskEndpointsCache[projectId] = [];
   }
+  await refreshSavedResponsesFromDisk(projectId);
   notifyProjectApisChanged();
 }
 
@@ -345,16 +817,12 @@ export function formatAddApiUserError(code: string): string {
     "add-failed": "API를 저장하지 못했습니다.",
     "update-failed": "API를 수정하지 못했습니다.",
     "delete-failed": "API를 삭제하지 못했습니다.",
-    "ipc-not-registered":
-      "메인 프로세스에 API 저장 기능이 연결되지 않았습니다. 앱을 완전히 종료한 뒤 `npm run dev`로 다시 실행하거나 `npm run build` 후 실행해 주세요.",
+    "ipc-not-registered": "메인 프로세스에 API 저장 기능이 연결되지 않았습니다. 앱을 완전히 종료한 뒤 `npm run dev`로 다시 실행하거나 `npm run build` 후 실행해 주세요.",
   };
   return ko[code] ?? `API를 저장할 수 없습니다. (${code})`;
 }
 
-async function ipcInvokeDisk(
-  fn: () => Promise<unknown>,
-  defaultErrorCode: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+async function ipcInvokeDisk(fn: () => Promise<unknown>, defaultErrorCode: string): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const raw = await fn();
     const res = raw as { ok?: boolean; error?: string };
@@ -469,10 +937,7 @@ export async function updateProjectApiEndpoint(
   return { ok: true };
 }
 
-export async function deleteProjectApiEndpoint(
-  projectId: string,
-  apiId: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function deleteProjectApiEndpoint(projectId: string, apiId: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
   if (!p) return { ok: false, error: "not-found" };
 
@@ -535,7 +1000,11 @@ export async function hydrateProjects(): Promise<void> {
       }
       projectsCache = list.map((m) => manifestToProject(m as ManifestLike));
     } else {
-      projectsCache = readLegacyList();
+      const legacyMap = readBrowserLinkedClientsMap();
+      projectsCache = readLegacyList().map((p) => ({
+        ...p,
+        ...(legacyMap[p.id]?.length ? { linkedClients: legacyMap[p.id] } : {}),
+      }));
     }
 
     notifyProjectsChanged();
@@ -551,18 +1020,88 @@ export function getStoredProjects(): Project[] {
   if (typeof window === "undefined") return [];
   if (projectsCache !== null) return projectsCache;
   if (!getProjectsApi()) {
-    projectsCache = readLegacyList();
+    const legacyMap = readBrowserLinkedClientsMap();
+    projectsCache = readLegacyList().map((p) => ({
+      ...p,
+      ...(legacyMap[p.id]?.length ? { linkedClients: legacyMap[p.id] } : {}),
+    }));
     return projectsCache;
   }
   return [];
+}
+
+export function hasProjectDiskApi(): boolean {
+  return Boolean(getProjectsApi());
+}
+
+export async function getAppProxyConfig(): Promise<AppProxyConfig> {
+  const disk = getProjectsApi();
+  if (disk && typeof disk.getAppProxyConfig === "function") {
+    try {
+      return (await disk.getAppProxyConfig()) as AppProxyConfig;
+    } catch {
+      return defaultAppProxyConfig();
+    }
+  }
+  return readBrowserAppProxyConfig();
+}
+
+export async function setAppProxyConfig(
+  partial: { proxyServer?: { port?: number; enabled?: boolean } },
+): Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (disk && typeof disk.setAppProxyConfig === "function") {
+    const res = (await disk.setAppProxyConfig(partial)) as { ok?: boolean; config?: AppProxyConfig; error?: string };
+    if (res?.ok && res.config) return { ok: true, config: res.config };
+    return { ok: false, error: res?.error ?? "save-failed" };
+  }
+  const cur = readBrowserAppProxyConfig();
+  const next: AppProxyConfig = {
+    version: APP_PROXY_CONFIG_FILE_VERSION,
+    proxyServer: {
+      port:
+        partial.proxyServer?.port != null && Number.isFinite(partial.proxyServer.port)
+          ? Math.min(65535, Math.max(1, Math.floor(partial.proxyServer.port)))
+          : cur.proxyServer.port,
+      enabled: partial.proxyServer?.enabled ?? cur.proxyServer.enabled,
+    },
+  };
+  writeBrowserAppProxyConfig(next);
+  return { ok: true, config: next };
+}
+
+export async function updateProjectLinkedClients(
+  projectId: string,
+  linkedClients: LinkedClientEntry[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+  const folder = p.folderName?.trim();
+  const disk = getProjectsApi();
+  if (disk && typeof disk.setLinkedClients === "function" && folder) {
+    const res = (await disk.setLinkedClients({ folderName: folder, linkedClients })) as { ok?: boolean; error?: string };
+    if (!res?.ok) return { ok: false, error: res?.error ?? "save-failed" };
+    await hydrateProjects();
+    return { ok: true };
+  }
+  const map = readBrowserLinkedClientsMap();
+  if (linkedClients.length) map[projectId] = linkedClients;
+  else delete map[projectId];
+  writeBrowserLinkedClientsMap(map);
+  if (projectsCache) {
+    projectsCache = projectsCache.map((proj) =>
+      proj.id === projectId ? { ...proj, linkedClients: linkedClients.length ? linkedClients : undefined } : proj,
+    );
+  }
+  notifyProjectsChanged();
+  return { ok: true };
 }
 
 export function createProjectRecord(input: { name: string; description: string; isFavorite: boolean }): Project {
   const now = new Date().toISOString();
   const name = input.name.trim();
   const description = input.description.trim();
-  const id =
-    typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   return {
     id,
@@ -671,8 +1210,10 @@ export async function deleteProject(projectId: string): Promise<{ ok: boolean; e
         projectsCache = getStoredProjects().filter((x) => x.id !== projectId);
       }
       delete diskEndpointsCache[projectId];
+      delete savedResponsesCache[projectId];
       notifyProjectsChanged();
       notifyProjectApisChanged();
+      notifySavedApiResponsesChanged();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -686,8 +1227,10 @@ export async function deleteProject(projectId: string): Promise<{ ok: boolean; e
   projectsCache = next;
   delete diskEndpointsCache[projectId];
   removeBrowserApisForProject(projectId);
+  removeBrowserSavedResponsesForProject(projectId);
   notifyProjectsChanged();
   notifyProjectApisChanged();
+  notifySavedApiResponsesChanged();
   return { ok: true };
 }
 
@@ -788,4 +1331,42 @@ export function getProjectBySlug(slug: string | null): Project | null {
     projects.find((p) => p.name === slug || p.name === decoded) ??
     null
   );
+}
+
+function readBrowserApiLatencyMap(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(BROWSER_API_LATENCY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.max(0, v);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeBrowserApiLatencyMap(map: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(BROWSER_API_LATENCY_STORAGE_KEY, JSON.stringify(map));
+}
+
+export function getStoredApiLatencyMs(apiName: string): number {
+  const key = apiName.trim();
+  if (!key) return 0;
+  const v = readBrowserApiLatencyMap()[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+export function setStoredApiLatencyMs(apiName: string, ms: number): void {
+  const key = apiName.trim();
+  if (!key) return;
+  const map = readBrowserApiLatencyMap();
+  const n = typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  map[key] = n;
+  writeBrowserApiLatencyMap(map);
 }

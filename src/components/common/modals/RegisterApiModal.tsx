@@ -8,8 +8,9 @@ import Btn from "@/components/common/Btn";
 import DropDown from "@/components/common/DropDown";
 import Input from "@/components/common/Input";
 import Modal from "@/components/common/Modal";
-import { NoticeModal } from "@/components/common/modals";
 import TextArea from "@/components/common/TextArea";
+
+import NoticeModal from "./NoticeModal";
 
 // Libs
 import { addProjectApiEndpoint, formatAddApiUserError, updateProjectApiEndpoint } from "@/libs/projects/store";

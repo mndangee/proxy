@@ -201,10 +201,10 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
                       }`}
                     >
                       <div className={`flex min-w-0 items-center justify-between`}>
-                        <span className={`typo-body-1-normal shrink truncate ${isItemActive ? "text-[#13A4EC]" : "text-label-common"}`}>{callFn}</span>
-                        <span className="typo-body-2-normal text-label-common truncate">{apiTitle}</span>
+                        <span className={`typo-body-1-normal shrink truncate font-bold ${isItemActive ? "text-[#13A4EC]" : "text-label-common"}`}>{callFn}</span>
+                        <span className="typo-caption-1 text-label-common truncate font-bold">{apiTitle}</span>
                       </div>
-                      <div className={`${lineClass} text-label-common typo-caption-1 mt-3 truncate`}>{item.description || "—"}</div>
+                      <div className={`${lineClass} text-label-common typo-caption-1 mt-3 truncate font-bold`}>{item.description || "—"}</div>
                     </a>
                   );
                 })}

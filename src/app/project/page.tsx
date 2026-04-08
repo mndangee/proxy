@@ -10,7 +10,7 @@ import PlusIcon from "@/assets/svg/PlusIcon";
 import Btn from "@/components/common/Btn";
 import ApiEndpointsTable from "@/components/project/ApiEndpointsTable";
 import NoApiEndpoints from "@/components/project/NoApiEndpoints";
-import RegisterApiModal from "@/components/main/RegisterApiModal";
+import { RegisterApiModal } from "@/components/common/modals";
 import Header from "@/components/shared/Header";
 import Navigation from "@/components/shared/Navigation";
 
@@ -31,10 +31,11 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const [apiModalOpen, setApiModalOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState<ApiEndpoint | null>(null);
   const [listTick, setListTick] = useState(0);
+  const [projectsTick, setProjectsTick] = useState(0);
 
   const bumpList = useCallback(() => setListTick((t) => t + 1), []);
 
-  const project = getProjectBySlug(projectSlug);
+  const project = useMemo(() => getProjectBySlug(projectSlug), [projectSlug, projectsTick]);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -52,8 +53,19 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
       <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
         <Navigation activeProjectSlug={null} onNewProject={() => (window.location.href = "/")} />
         <div id="app-main" className="relative flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden">
-          <div className="border-border-enabled border-b">
-            <Header variant="sub" title="프로젝트" />
+          <div className="border-border-enabled bg-background-white border-b">
+            <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/";
+                }}
+                className="typo-caption-1 text-label-assistant hover:text-label-normal mb-1 w-fit cursor-pointer text-left transition-colors"
+              >
+                ← 홈으로 돌아가기
+              </button>
+            </div>
+            <Header variant="sub" title="프로젝트" className="!pt-3" />
           </div>
           <div className="flex min-w-0 flex-1 items-center justify-center px-6 py-16">
             <p className="typo-body-1-normal text-label-assistant text-center">등록된 프로젝트가 없거나 찾을 수 없습니다. 홈에서 프로젝트를 만들어 주세요.</p>
@@ -80,8 +92,19 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
       />
       <Navigation activeProjectSlug={currentProjectSlug} onNewProject={() => (window.location.href = "/")} />
       <div id="app-main" className="relative flex min-h-screen min-w-0 flex-1 flex-col overflow-x-hidden">
-        <div className="border-border-enabled border-b">
-          <Header variant="sub" title={project.name} />
+        <div className="border-border-enabled bg-background-white border-b">
+          <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/";
+              }}
+              className="typo-caption-1 text-label-assistant hover:text-label-normal mb-1 w-fit cursor-pointer text-left transition-colors"
+            >
+              ← 홈으로 돌아가기
+            </button>
+          </div>
+          <Header variant="sub" title={project.name} className="!pt-3" />
         </div>
 
         <div className="min-w-0 flex-1 overflow-auto px-6 py-8">

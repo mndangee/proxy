@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 
 // Components
-import CreateProjectModal from "@/components/main/CreateProjectModal";
+import { CreateProjectModal } from "@/components/common/modals";
 
 // Libs
 import { OPEN_CREATE_PROJECT_MODAL_EVENT, type OpenCreateProjectModalDetail } from "@/libs/projects/store";

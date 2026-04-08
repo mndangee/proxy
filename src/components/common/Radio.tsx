@@ -15,8 +15,10 @@ export interface IRadioProps {
   category?: RadioCategoryType;
   /** 라디오버튼 데이터 */
   label?: string;
-  /** 라디오버튼 설명 데이터 */
+  /** 라디오버튼 보조 문구 (캡션) */
   infoText?: string;
+  /** infoText 아래에 표시하는 본문 설명 */
+  description?: string;
   /** 라디오 값 */
   value: string;
   /** 선택된 라디오 값 -> const [sample, setSample] = useState<string>("") */
@@ -70,6 +72,7 @@ export default function Radio({ category = "default", ...props }: IRadioProps) {
       <div className="flex-auto">
         {props.label && <div className={`typo-body-1-normal ${labelColorClassName}`}>{props.label}</div>}
         {props.infoText && <div className={"typo-caption-1 text-label-assistant"}>{props.infoText}</div>}
+        {props.description?.trim() && <div className="typo-body-2-normal text-label-neutral mt-0.5">{props.description.trim()}</div>}
       </div>
     </div>
   );

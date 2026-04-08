@@ -6,7 +6,13 @@ import { join } from "path";
 import AdmZip from "adm-zip";
 import { app, dialog, ipcMain } from "electron";
 
+import type { AppProxyConfig, LinkedClientEntry } from "@/types";
+
 export const PROJECT_MANIFEST_VERSION = 1;
+
+export const DEFAULT_PROXY_SERVER_PORT = 4780;
+
+export const APP_PROXY_CONFIG_VERSION = 1;
 
 export interface ProjectManifest {
   version: number;
@@ -17,6 +23,7 @@ export interface ProjectManifest {
   updatedAt: string;
   isFavorite: boolean;
   folderName: string;
+  linkedClients?: LinkedClientEntry[];
 }
 
 function slugify(name: string): string {
@@ -114,16 +121,89 @@ async function pickImportSourcePath(): Promise<string | null> {
   return null;
 }
 
+function coerceLinkedClients(raw: unknown): LinkedClientEntry[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: LinkedClientEntry[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id.trim() : "";
+    const label = typeof o.label === "string" ? o.label.trim() : "";
+    if (!id || !label) continue;
+    const allowedOrigins = Array.isArray(o.allowedOrigins)
+      ? o.allowedOrigins.filter((x): x is string => typeof x === "string").map((s) => s.trim()).filter(Boolean)
+      : [];
+    const notesRaw = typeof o.notes === "string" ? o.notes.trim() : "";
+    out.push({
+      id,
+      label,
+      allowedOrigins,
+      ...(notesRaw ? { notes: notesRaw } : {}),
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 async function readManifest(projectRoot: string): Promise<ProjectManifest | null> {
   try {
     const raw = await fs.readFile(join(projectRoot, "project.json"), "utf-8");
-    const data = JSON.parse(raw) as ProjectManifest;
+    const data = JSON.parse(raw) as ProjectManifest & { linkedClients?: unknown };
     if (!data || typeof data !== "object" || data.version !== PROJECT_MANIFEST_VERSION) return null;
     if (typeof data.id !== "string" || typeof data.name !== "string") return null;
-    return data;
+    const linkedClients = coerceLinkedClients(data.linkedClients);
+    const { linkedClients: _raw, ...rest } = data;
+    return linkedClients?.length ? { ...rest, linkedClients } : { ...rest };
   } catch {
     return null;
   }
+}
+
+function getAppProxyConfigPath(): string {
+  return join(app.getPath("userData"), "proxy-app-config.json");
+}
+
+function defaultAppProxyConfig(): AppProxyConfig {
+  return {
+    version: APP_PROXY_CONFIG_VERSION,
+    proxyServer: { port: DEFAULT_PROXY_SERVER_PORT, enabled: false },
+  };
+}
+
+async function readAppProxyConfigDisk(): Promise<AppProxyConfig> {
+  try {
+    const raw = await fs.readFile(getAppProxyConfigPath(), "utf-8");
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object") return defaultAppProxyConfig();
+    const o = data as Record<string, unknown>;
+    if (o.version !== APP_PROXY_CONFIG_VERSION) return defaultAppProxyConfig();
+    const ps = o.proxyServer;
+    if (!ps || typeof ps !== "object") return defaultAppProxyConfig();
+    const p = ps as Record<string, unknown>;
+    const port = typeof p.port === "number" && Number.isFinite(p.port) ? Math.floor(p.port) : DEFAULT_PROXY_SERVER_PORT;
+    const enabled = Boolean(p.enabled);
+    const clamped = Math.min(65535, Math.max(1, port));
+    return { version: APP_PROXY_CONFIG_VERSION, proxyServer: { port: clamped, enabled } };
+  } catch {
+    return defaultAppProxyConfig();
+  }
+}
+
+async function mergeAppProxyConfigDisk(partial: unknown): Promise<AppProxyConfig> {
+  const cur = await readAppProxyConfigDisk();
+  const o = partial != null && typeof partial === "object" ? (partial as Record<string, unknown>) : {};
+  const psIn = o.proxyServer;
+  let port = cur.proxyServer.port;
+  let enabled = cur.proxyServer.enabled;
+  if (psIn && typeof psIn === "object") {
+    const p = psIn as Record<string, unknown>;
+    if (typeof p.port === "number" && Number.isFinite(p.port)) {
+      port = Math.min(65535, Math.max(1, Math.floor(p.port)));
+    }
+    if (typeof p.enabled === "boolean") enabled = p.enabled;
+  }
+  const next: AppProxyConfig = { version: APP_PROXY_CONFIG_VERSION, proxyServer: { port, enabled } };
+  await fs.writeFile(getAppProxyConfigPath(), JSON.stringify(next, null, 2), "utf-8");
+  return next;
 }
 
 async function hasProjectWithDisplayName(root: string, displayName: string): Promise<boolean> {
@@ -174,12 +254,7 @@ async function readApisIndex(projectRoot: string): Promise<StoredApiEntry[]> {
         method: methodUp,
         tran: tranTrim,
         description: typeof o.description === "string" ? o.description : "",
-        name:
-          typeof o.name === "string"
-            ? o.name
-            : tranTrim
-              ? `${methodUp} ${tranTrim}`
-              : methodUp,
+        name: typeof o.name === "string" ? o.name : tranTrim ? `${methodUp} ${tranTrim}` : methodUp,
         createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
         updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
       });
@@ -203,6 +278,47 @@ async function writeApisIndex(projectRoot: string, items: StoredApiEntry[]): Pro
     updatedAt: row.updatedAt,
   }));
   await fs.writeFile(fp, JSON.stringify(sanitized, null, 2), "utf-8");
+}
+
+const API_RESPONSES_STORE_VERSION = 1;
+
+type ApiResponseRowDisk = {
+  id: string;
+  value: string;
+  label: string;
+  description: string;
+  editorType: "default" | "test" | "error";
+  configuration: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ApiResponsesStoreFile = {
+  version: number;
+  byApiName: Record<string, ApiResponseRowDisk[]>;
+};
+
+async function readApiResponsesStore(projectRoot: string): Promise<ApiResponsesStoreFile> {
+  const fp = join(projectRoot, "apis", "responses-store.json");
+  try {
+    const raw = await fs.readFile(fp, "utf-8");
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object") return { version: API_RESPONSES_STORE_VERSION, byApiName: {} };
+    const o = data as Record<string, unknown>;
+    if (o.version !== API_RESPONSES_STORE_VERSION || typeof o.byApiName !== "object" || o.byApiName === null) {
+      return { version: API_RESPONSES_STORE_VERSION, byApiName: {} };
+    }
+    return { version: API_RESPONSES_STORE_VERSION, byApiName: o.byApiName as Record<string, ApiResponseRowDisk[]> };
+  } catch {
+    return { version: API_RESPONSES_STORE_VERSION, byApiName: {} };
+  }
+}
+
+async function writeApiResponsesStore(projectRoot: string, byApiName: Record<string, ApiResponseRowDisk[]>): Promise<void> {
+  const fp = join(projectRoot, "apis", "responses-store.json");
+  await fs.mkdir(join(projectRoot, "apis"), { recursive: true });
+  const body: ApiResponsesStoreFile = { version: API_RESPONSES_STORE_VERSION, byApiName };
+  await fs.writeFile(fp, JSON.stringify(body, null, 2), "utf-8");
 }
 
 type LegacyRow = {
@@ -229,6 +345,45 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:addApi");
   ipcMain.removeHandler("project-fs:updateApi");
   ipcMain.removeHandler("project-fs:deleteApi");
+  ipcMain.removeHandler("project-fs:getResponsesStore");
+  ipcMain.removeHandler("project-fs:upsertApiResponse");
+  ipcMain.removeHandler("project-fs:deleteApiResponse");
+  ipcMain.removeHandler("project-fs:getAppProxyConfig");
+  ipcMain.removeHandler("project-fs:setAppProxyConfig");
+  ipcMain.removeHandler("project-fs:setLinkedClients");
+
+  ipcMain.handle("project-fs:getAppProxyConfig", async (): Promise<AppProxyConfig> => readAppProxyConfigDisk());
+
+  ipcMain.handle("project-fs:setAppProxyConfig", async (_e, partial: unknown) => {
+    try {
+      const next = await mergeAppProxyConfigDisk(partial);
+      return { ok: true as const, config: next };
+    } catch {
+      return { ok: false as const, error: "save-failed" };
+    }
+  });
+
+  ipcMain.handle(
+    "project-fs:setLinkedClients",
+    async (_e, payload: unknown): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const p = payload != null && typeof payload === "object" ? (payload as { folderName?: unknown; linkedClients?: unknown }) : {};
+      const fname = typeof p.folderName === "string" ? p.folderName.trim() : "";
+      if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+      const root = getProjectsRoot();
+      const projectRoot = join(root, fname);
+      const manifest = await readManifest(projectRoot);
+      if (!manifest) return { ok: false as const, error: "not-found" };
+      const linkedClients = coerceLinkedClients(p.linkedClients) ?? [];
+      const now = new Date().toISOString();
+      const next: ProjectManifest = {
+        ...manifest,
+        linkedClients: linkedClients.length ? linkedClients : undefined,
+        updatedAt: now,
+      };
+      await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(next, null, 2), "utf-8");
+      return { ok: true as const };
+    },
+  );
 
   ipcMain.handle("project-fs:list", async (): Promise<ProjectManifest[]> => {
     await ensureProjectsRoot();
@@ -249,10 +404,7 @@ export function registerProjectFsIpc(): void {
   });
 
   ipcMain.handle("project-fs:create", async (_e, payload: unknown) => {
-    const p =
-      payload != null && typeof payload === "object"
-        ? (payload as { name?: unknown; description?: unknown; isFavorite?: unknown })
-        : {};
+    const p = payload != null && typeof payload === "object" ? (payload as { name?: unknown; description?: unknown; isFavorite?: unknown }) : {};
     await ensureProjectsRoot();
     const root = getProjectsRoot();
     const name = String(p.name ?? "").trim();
@@ -454,11 +606,10 @@ export function registerProjectFsIpc(): void {
     const fname = typeof folderName === "string" ? folderName.trim() : "";
     if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
 
-    const p =
-      payload != null && typeof payload === "object"
-        ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown })
-        : {};
-    const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
+    const p = payload != null && typeof payload === "object" ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown }) : {};
+    const methodRaw = String(p.method ?? "GET")
+      .trim()
+      .toUpperCase();
     const tranStr = String(p.tran ?? p.path ?? "").trim();
     const description = String(p.description ?? "").trim();
     const apiDisplayName = String(p.name ?? "").trim();
@@ -501,67 +652,61 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, api: entry };
   });
 
-  ipcMain.handle(
-    "project-fs:updateApi",
-    async (_e, folderName: unknown, apiId: unknown, payload: unknown) => {
-      const fname = typeof folderName === "string" ? folderName.trim() : "";
-      if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+  ipcMain.handle("project-fs:updateApi", async (_e, folderName: unknown, apiId: unknown, payload: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
 
-      const id = typeof apiId === "string" ? apiId.trim() : "";
-      if (!id) return { ok: false as const, error: "api-not-found" };
+    const id = typeof apiId === "string" ? apiId.trim() : "";
+    if (!id) return { ok: false as const, error: "api-not-found" };
 
-      const p =
-        payload != null && typeof payload === "object"
-          ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown })
-          : {};
-      const methodRaw = String(p.method ?? "GET").trim().toUpperCase();
-      const tranStr = String(p.tran ?? p.path ?? "").trim();
-      const description = String(p.description ?? "").trim();
-      const apiDisplayName = String(p.name ?? "").trim();
+    const p = payload != null && typeof payload === "object" ? (payload as { method?: unknown; tran?: unknown; path?: unknown; description?: unknown; name?: unknown }) : {};
+    const methodRaw = String(p.method ?? "GET")
+      .trim()
+      .toUpperCase();
+    const tranStr = String(p.tran ?? p.path ?? "").trim();
+    const description = String(p.description ?? "").trim();
+    const apiDisplayName = String(p.name ?? "").trim();
 
-      if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
-      if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
-      if (!description) return { ok: false as const, error: "empty-description" };
-      if (!tranStr) return { ok: false as const, error: "empty-tran" };
+    if (!HTTP_METHODS.has(methodRaw)) return { ok: false as const, error: "invalid-method" };
+    if (!apiDisplayName) return { ok: false as const, error: "empty-name" };
+    if (!description) return { ok: false as const, error: "empty-description" };
+    if (!tranStr) return { ok: false as const, error: "empty-tran" };
 
-      const root = getProjectsRoot();
-      const projectRoot = join(root, fname);
-      const manifest = await readManifest(projectRoot);
-      if (!manifest) return { ok: false as const, error: "not-found" };
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
 
-      const items = await readApisIndex(projectRoot);
-      const idx = items.findIndex((x) => x.id === id);
-      if (idx < 0) return { ok: false as const, error: "api-not-found" };
+    const items = await readApisIndex(projectRoot);
+    const idx = items.findIndex((x) => x.id === id);
+    if (idx < 0) return { ok: false as const, error: "api-not-found" };
 
-      const normTran = tranStr;
-      if (
-        items.some((x, i) => i !== idx && x.method === methodRaw && x.tran.trim() === normTran)
-      ) {
-        return { ok: false as const, error: "duplicate-endpoint" };
-      }
-      if (items.some((x, i) => i !== idx && x.name.trim() === apiDisplayName)) {
-        return { ok: false as const, error: "duplicate-api-name" };
-      }
+    const normTran = tranStr;
+    if (items.some((x, i) => i !== idx && x.method === methodRaw && x.tran.trim() === normTran)) {
+      return { ok: false as const, error: "duplicate-endpoint" };
+    }
+    if (items.some((x, i) => i !== idx && x.name.trim() === apiDisplayName)) {
+      return { ok: false as const, error: "duplicate-api-name" };
+    }
 
-      const now = new Date().toISOString();
-      const prev = items[idx];
-      const entry: StoredApiEntry = {
-        ...prev,
-        method: methodRaw,
-        tran: normTran,
-        description,
-        name: apiDisplayName,
-        updatedAt: now,
-      };
-      items[idx] = entry;
-      await writeApisIndex(projectRoot, items);
+    const now = new Date().toISOString();
+    const prev = items[idx];
+    const entry: StoredApiEntry = {
+      ...prev,
+      method: methodRaw,
+      tran: normTran,
+      description,
+      name: apiDisplayName,
+      updatedAt: now,
+    };
+    items[idx] = entry;
+    await writeApisIndex(projectRoot, items);
 
-      const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
-      await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+    const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
 
-      return { ok: true as const, api: entry };
-    },
-  );
+    return { ok: true as const, api: entry };
+  });
 
   ipcMain.handle("project-fs:deleteApi", async (_e, folderName: unknown, apiId: unknown) => {
     const fname = typeof folderName === "string" ? folderName.trim() : "";
@@ -581,6 +726,127 @@ export function registerProjectFsIpc(): void {
 
     const now = new Date().toISOString();
     await writeApisIndex(projectRoot, next);
+    const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("project-fs:getResponsesStore", async (_e, folderName: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) {
+      return { version: API_RESPONSES_STORE_VERSION, byApiName: {} };
+    }
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    if (!(await readManifest(projectRoot))) {
+      return { version: API_RESPONSES_STORE_VERSION, byApiName: {} };
+    }
+    return readApiResponsesStore(projectRoot);
+  });
+
+  ipcMain.handle("project-fs:upsertApiResponse", async (_e, folderName: unknown, apiName: unknown, payload: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+
+    const api = typeof apiName === "string" ? apiName.trim() : "";
+    if (!api) return { ok: false as const, error: "empty-api-name" };
+
+    const pl = payload != null && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const label = String(pl.label ?? "").trim() || api;
+    const description = String(pl.description ?? "").trim();
+    const editorRaw = String(pl.editorType ?? "default").toLowerCase();
+    const editorType: "default" | "test" | "error" = editorRaw === "test" ? "test" : editorRaw === "error" ? "error" : "default";
+    const configuration = String(pl.configuration ?? "");
+    const existingValue = pl.value != null && String(pl.value).trim() ? String(pl.value).trim() : null;
+
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    const store = await readApiResponsesStore(projectRoot);
+    const list = [...(store.byApiName[api] ?? [])];
+    const now = new Date().toISOString();
+    let outValue: string;
+
+    if (existingValue) {
+      const idx = list.findIndex((r) => r.value === existingValue);
+      if (idx >= 0) {
+        const prev = list[idx];
+        list[idx] = {
+          ...prev,
+          label,
+          description,
+          editorType,
+          configuration,
+          updatedAt: now,
+        };
+        outValue = list[idx].value;
+      } else {
+        outValue = `saved-${randomUUID()}`;
+        list.push({
+          id: outValue,
+          value: outValue,
+          label,
+          description,
+          editorType,
+          configuration,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    } else {
+      outValue = `saved-${randomUUID()}`;
+      list.push({
+        id: outValue,
+        value: outValue,
+        label,
+        description,
+        editorType,
+        configuration,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    store.byApiName[api] = list;
+    await writeApiResponsesStore(projectRoot, store.byApiName);
+
+    const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+
+    return { ok: true as const, value: outValue };
+  });
+
+  ipcMain.handle("project-fs:deleteApiResponse", async (_e, folderName: unknown, apiName: unknown, responseValue: unknown) => {
+    const fname = typeof folderName === "string" ? folderName.trim() : "";
+    if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
+
+    const api = typeof apiName === "string" ? apiName.trim() : "";
+    if (!api) return { ok: false as const, error: "empty-api-name" };
+
+    const val = typeof responseValue === "string" ? responseValue.trim() : "";
+    if (!val) return { ok: false as const, error: "empty-value" };
+
+    const root = getProjectsRoot();
+    const projectRoot = join(root, fname);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    const store = await readApiResponsesStore(projectRoot);
+    const list = [...(store.byApiName[api] ?? [])];
+    const idx = list.findIndex((r) => r.value === val);
+    if (idx < 0) return { ok: false as const, error: "response-not-found" };
+
+    list.splice(idx, 1);
+    const nextByApi = { ...store.byApiName };
+    if (list.length) nextByApi[api] = list;
+    else delete nextByApi[api];
+
+    await writeApiResponsesStore(projectRoot, nextByApi);
+
+    const now = new Date().toISOString();
     const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
     await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
 

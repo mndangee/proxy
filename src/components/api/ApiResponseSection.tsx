@@ -7,8 +7,8 @@ import type { Dispatch, ReactNode, SetStateAction } from "react";
 import AddBtnIcon from "@/assets/svg/AddBtnIcon";
 
 // Components
+import ApiResponseRadioList from "@/components/api/ApiResponseRadioList";
 import ApiResponseStatus from "@/components/api/ApiResponseStatus";
-import Radio from "@/components/common/Radio";
 
 // Libs
 import { type ActiveApiResponseState, getApiResponseGroups, type ApiResponseItem } from "@/libs/datadummy/api";
@@ -20,6 +20,8 @@ export interface ApiResponseSectionProps {
   setCheckedValue: Dispatch<SetStateAction<string>>;
   activeResponse: ActiveApiResponseState;
   onApplyActiveResponse: (item: ApiResponseItem) => void;
+  /** 디스크에 저장된 응답만 삭제 (내장 템플릿 제외) */
+  onDeletePersistedResponse?: (item: ApiResponseItem) => void | Promise<void>;
 }
 
 function ApiResponseColumnHeader({ title, apiName, type }: { title: string; apiName: string; type: "default" | "test" | "error" }) {
@@ -31,33 +33,6 @@ function ApiResponseColumnHeader({ title, apiName, type }: { title: string; apiN
       <button type="button" onClick={() => (window.location.href = `/api/json?state=new&apiName=${encodeURIComponent(apiName)}&type=${type}`)} className="cursor-pointer">
         <AddBtnIcon />
       </button>
-    </div>
-  );
-}
-
-function ApiResponseRadioList({
-  items,
-  checkedValue,
-  setCheckedValue,
-}: {
-  items: ApiResponseItem[];
-  checkedValue: string;
-  setCheckedValue: Dispatch<SetStateAction<string>>;
-}) {
-  return (
-    <div className="flex flex-col gap-4">
-      {items.map((item) => (
-        <Radio
-          key={item.value}
-          label={item.label}
-          labelColorClassName={item.type === "error" ? "text-label-negative" : undefined}
-          value={item.value}
-          category="box"
-          infoText={item.infoText}
-          checkedValue={checkedValue}
-          setCheckedValue={setCheckedValue}
-        />
-      ))}
     </div>
   );
 }
@@ -89,7 +64,15 @@ function ApiResponseColumn({
   );
 }
 
-export default function ApiResponseSection({ apiName, className = "", checkedValue, setCheckedValue, activeResponse, onApplyActiveResponse }: ApiResponseSectionProps) {
+export default function ApiResponseSection({
+  apiName,
+  className = "",
+  checkedValue,
+  setCheckedValue,
+  activeResponse,
+  onApplyActiveResponse,
+  onDeletePersistedResponse,
+}: ApiResponseSectionProps) {
   const { localResponses, testResponses, errorResponses } = getApiResponseGroups(apiName);
   const allItems = [...localResponses, ...testResponses, ...errorResponses];
   const selectedItem = allItems.find((item) => item.value === checkedValue) ?? localResponses[0];
@@ -99,7 +82,9 @@ export default function ApiResponseSection({ apiName, className = "", checkedVal
     <div className={`mx-auto w-full max-w-[1600px] space-y-5 ${className}`}>
       <ApiResponseStatus
         title={selectedItem?.label ?? ""}
-        status={isActiveSelection ? "사용중" : selectedItem?.description ?? ""}
+        status={isActiveSelection ? "사용중" : (selectedItem?.description ?? "")}
+        hasSelectedResponse={Boolean(selectedItem)}
+        isActiveResponse={isActiveSelection}
         showApplyButton={Boolean(selectedItem && !isActiveSelection)}
         onApplyAsActive={selectedItem ? () => onApplyActiveResponse(selectedItem) : undefined}
       />
@@ -107,15 +92,33 @@ export default function ApiResponseSection({ apiName, className = "", checkedVal
       {/* Three columns */}
       <div className="border-border-enabled rounded-3 bg-background-white flex border p-7">
         <ApiResponseColumn title="로컬 응답" apiName={apiName} type="default" className="flex-[0_0_25%]" withDivider>
-          <ApiResponseRadioList items={localResponses} checkedValue={checkedValue} setCheckedValue={setCheckedValue} />
+          <ApiResponseRadioList
+            apiName={apiName}
+            items={localResponses}
+            checkedValue={checkedValue}
+            setCheckedValue={setCheckedValue}
+            onDeletePersistedResponse={onDeletePersistedResponse}
+          />
         </ApiResponseColumn>
 
         <ApiResponseColumn title="테스트 응답" apiName={apiName} type="test" className="flex-[0_0_30%]" withDivider>
-          <ApiResponseRadioList items={testResponses} checkedValue={checkedValue} setCheckedValue={setCheckedValue} />
+          <ApiResponseRadioList
+            apiName={apiName}
+            items={testResponses}
+            checkedValue={checkedValue}
+            setCheckedValue={setCheckedValue}
+            onDeletePersistedResponse={onDeletePersistedResponse}
+          />
         </ApiResponseColumn>
 
         <ApiResponseColumn title="에러 응답" apiName={apiName} type="error" className="flex-[0_0_calc(45%-32px)]">
-          <ApiResponseRadioList items={errorResponses} checkedValue={checkedValue} setCheckedValue={setCheckedValue} />
+          <ApiResponseRadioList
+            apiName={apiName}
+            items={errorResponses}
+            checkedValue={checkedValue}
+            setCheckedValue={setCheckedValue}
+            onDeletePersistedResponse={onDeletePersistedResponse}
+          />
         </ApiResponseColumn>
       </div>
     </div>

@@ -13,6 +13,7 @@ import HistoryList from "@/components/main/HistoryList";
 import {
   DUPLICATE_PROJECT_NAME_MESSAGE,
   getStoredProjects,
+  hydrateProjects,
   importSharedProject,
   PROJECTS_CHANGED_EVENT,
   readHomeProjectTabFromUrl,
@@ -61,6 +62,10 @@ export default function HomePage() {
   }, [showImportModal]);
 
   useEffect(() => {
+    void hydrateProjects();
+  }, []);
+
+  useEffect(() => {
     refreshProjects();
     const onChange = () => refreshProjects();
     window.addEventListener(PROJECTS_CHANGED_EVENT, onChange);
@@ -83,7 +88,7 @@ export default function HomePage() {
           {showProjectTabs ? <ProjectTab activeTab={projectTab} onTabChange={setProjectTab} /> : null}
           <div className="">
             <ProjectsList folderId="id" projects={visibleProjects} onProjectsChange={refreshProjects} />
-            <HistoryList folderId={""} />
+            <HistoryList limit={8} />
           </div>
         </div>
       </div>

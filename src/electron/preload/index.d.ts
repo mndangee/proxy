@@ -1,4 +1,4 @@
-import type { ElectronAPI } from "@electron-toolkit/preload";
+import type { AppProxyConfig, LinkedClientEntry } from "@/types";
 
 export interface ProjectManifest {
   version: number;
@@ -9,6 +9,7 @@ export interface ProjectManifest {
   updatedAt: string;
   isFavorite: boolean;
   folderName: string;
+  linkedClients?: LinkedClientEntry[];
 }
 
 export interface StoredApiEntry {
@@ -23,9 +24,7 @@ export interface StoredApiEntry {
 
 export interface ProjectFsApi {
   list: () => Promise<ProjectManifest[]>;
-  create: (payload: { name: string; description: string; isFavorite: boolean }) => Promise<
-    { ok: true; project: ProjectManifest } | { ok: false; error: string }
-  >;
+  create: (payload: { name: string; description: string; isFavorite: boolean }) => Promise<{ ok: true; project: ProjectManifest } | { ok: false; error: string }>;
   updateFavorite: (payload: { folderName: string; isFavorite: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
   export: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   exportZip: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
@@ -44,15 +43,18 @@ export interface ProjectFsApi {
     payload: { method: string; tran: string; description: string; name: string },
   ) => Promise<{ ok: true; api: StoredApiEntry } | { ok: false; error: string }>;
   deleteApi: (folderName: string, apiId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
-}
-
-declare global {
-  interface Window {
-    electron: ElectronAPI;
-    api: {
-      projects: ProjectFsApi;
-    };
-  }
+  getResponsesStore: (folderName: string) => Promise<{ version: number; byApiName: Record<string, unknown[]> }>;
+  upsertApiResponse: (
+    folderName: string,
+    apiName: string,
+    payload: { value: string | null; label: string; description: string; editorType: string; configuration: string },
+  ) => Promise<{ ok: true; value: string } | { ok: false; error: string }>;
+  deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  getAppProxyConfig: () => Promise<AppProxyConfig>;
+  setAppProxyConfig: (
+    partial: { proxyServer?: { port?: number; enabled?: boolean } },
+  ) => Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }>;
+  setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export {};

@@ -18,6 +18,8 @@ export interface ConfirmModalProps {
   /** 확인 클릭 시 (비동기 허용). 닫기/후처리는 호출부에서 처리 */
   onConfirm: () => void | Promise<void>;
   showCloseBtn?: boolean;
+  /** `#app-main` 기준 오버레이 (내비 제외) */
+  anchorMain?: boolean;
 }
 
 export default function ConfirmModal({
@@ -29,6 +31,7 @@ export default function ConfirmModal({
   confirmLabel = "확인",
   onConfirm,
   showCloseBtn = false,
+  anchorMain = false,
 }: ConfirmModalProps) {
   const [busy, setBusy] = useState(false);
 
@@ -47,7 +50,7 @@ export default function ConfirmModal({
   const pad = showCloseBtn ? "px-8 pt-12 pb-8" : "px-8 py-10";
 
   return (
-    <Modal isOpen={isOpen} onClose={busy ? undefined : onClose} size="small" showCloseBtn={showCloseBtn && !busy}>
+    <Modal isOpen={isOpen} onClose={busy ? undefined : onClose} size="small" showCloseBtn={showCloseBtn && !busy} anchorMain={anchorMain}>
       <div className={`flex w-full flex-col items-center text-center ${pad}`}>
         {title ? <h2 className="typo-title-3 text-label-normal w-full font-bold">{title}</h2> : null}
         <div className={`typo-body-2-normal text-label-neutral w-full ${title ? "mt-3" : ""}`}>{message}</div>
