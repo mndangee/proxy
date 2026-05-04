@@ -15,7 +15,7 @@ interface INoHistoryProps {
   buttonText: string;
 }
 
-export default function NoProject(props: INoHistoryProps) {
+export default function NoProject(_props: INoHistoryProps) {
   return (
     <div className="bg-background-white rounded-5 mt-9 flex w-full max-w-[1600px] flex-col items-center border-1 border-gray-200 py-14 text-center">
       <FolderIcon />

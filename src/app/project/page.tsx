@@ -35,14 +35,13 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const [apiModalOpen, setApiModalOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState<ApiEndpoint | null>(null);
   const [listTick, setListTick] = useState(0);
-  const [projectsTick, setProjectsTick] = useState(0);
   const [importNotice, setImportNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [apiSearchQuery, setApiSearchQuery] = useState("");
   const apiTableRef = useRef<ApiEndpointsTableHandle>(null);
 
   const bumpList = useCallback(() => setListTick((t) => t + 1), []);
 
-  const project = useMemo(() => getProjectBySlug(projectSlug), [projectSlug, projectsTick]);
+  const project = useMemo(() => getProjectBySlug(projectSlug), [projectSlug]);
 
   useEffect(() => {
     if (!project?.id) return;

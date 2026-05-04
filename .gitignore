@@ -12,6 +12,7 @@
 # electron-vite build
 /out
 /build
+/dist
 
 # misc
 .DS_Store

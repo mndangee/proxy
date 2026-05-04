@@ -225,11 +225,6 @@ function EditableCodeEditor({
 }
 
 export default function ApiJsonPage() {
-  const responseTypeOptions = [
-    { value: "기본", type: "default" },
-    { value: "테스트", type: "test" },
-    { value: "에러", type: "error" },
-  ];
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const editorState = searchParams?.get("state") ?? null;
   const sourceApiName = searchParams?.get("apiName") ?? "";

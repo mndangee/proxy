@@ -86,7 +86,7 @@ function JsonEditorResponseNav({ apiName }: { apiName: string }) {
   );
 }
 
-export default function Navigation({ activeProjectSlug = null, currentApiName = null, jsonEditorApiName = null, onNewProject }: NavigationProps) {
+export default function Navigation({ activeProjectSlug = null, currentApiName = null, jsonEditorApiName = null }: NavigationProps) {
   const [isNavOpen, setIsNavOpen] = useState(true);
   const [navProjects, setNavProjects] = useState<Project[]>([]);
   /** 페이지 이동 없이 LNB 프로젝트 목록만 즐겨찾기로 좁힘 */
