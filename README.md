@@ -27,6 +27,7 @@
 | **JSON 편집 (`/api/json`)** | 쿼리(`apiName`, `type`, `responseValue` 등)로 리소스 편집,보내기·「응답으로 사용」 |
 | **내비게이션 (LNB)** | 프로젝트 목록·API 엔드포인트·JSON 편집 응답 트리; 홈·즐겨찾기 필터·접기/펼치기 (아래 **사이드 내비게이션** 참고) |
 | **라이선스 (`/licenses`)** | 오픈소스 라이선스 목록 |
+| **다운로드 · 공유 (`/downloads`)** | 릴리스·ZIP·문서·PPT 링크 모음(팀 공유용) |
 | **디자인 시스템 (`/design-system`)** | 컴포넌트 샘플 |
 
 ### 사이드 내비게이션 (`Navigation.tsx`)
@@ -213,6 +214,23 @@ npm run format
 npm run licenses
 npm run docs:data-guide-pdf   # docs/data-lifecycle-guide.md → PDF (Chromium 기반, 최초 1회 다운로드)
 ```
+
+## 다운로드 · 공유
+
+GitHub 저장소: [https://github.com/mndangee/proxy](https://github.com/mndangee/proxy)
+
+아래 링크를 그대로 팀에 공유하면 됩니다. **앱을 실행한 경우** 화면 하단 푸터의 **「다운로드 · 공유」** 또는 경로 **`/downloads`**에서 동일한 안내 페이지를 열 수 있습니다.
+
+| 항목 | 링크 |
+|------|------|
+| 최신 릴리스 (배포용 DMG·Windows 설치 파일을 올릴 위치) | [GitHub Releases — Latest](https://github.com/mndangee/proxy/releases/latest) |
+| 모든 릴리스 | [Releases 목록](https://github.com/mndangee/proxy/releases) |
+| 소스 코드 ZIP (`feature/proxy` 브랜치 기준) | [ZIP 다운로드](https://github.com/mndangee/proxy/archive/refs/heads/feature/proxy.zip) |
+| 프로젝트 전체 동작 가이드 (브라우저에서 읽기) | [docs/project-full-flow-usage.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/project-full-flow-usage.md) |
+| 데이터 라이프사이클 가이드 | [docs/data-lifecycle-guide.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/data-lifecycle-guide.md) |
+| 개요·사용법 PPT (GitHub에서 Raw 저장) | [DataForge-프로젝트-개요-및-사용법.pptx](https://github.com/mndangee/proxy/blob/feature/proxy/docs/DataForge-프로젝트-개요-및-사용법.pptx) — 파일 화면에서 **⋯ → Download** |
+
+기본 브랜치를 `main`으로 옮긴 뒤에는 위 URL의 `feature/proxy`를 `main`으로 바꾸고, 코드의 `src/libs/site-links.ts` 안 **`SITE_GITHUB_DEFAULT_BRANCH`** 값도 같이 수정하세요.
 
 ## 문서
 
