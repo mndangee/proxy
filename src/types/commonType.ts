@@ -28,7 +28,7 @@ export type TextAlignType = "start" | "end" | "left" | "right" | "center" | "jus
 
 export type TableHeaderType = {
   value: string;
-  name: string;
+  name: ReactNode;
   width: string;
   textAlign?: TextAlignType;
   /** 있으면 해당 열은 `render` 결과로 표시 (셀 커스텀) */
@@ -43,6 +43,8 @@ export interface ITableProps {
   header: TableHeaderType[];
   searchParams?: SearchParamsType;
   hasCheckBox?: boolean;
+  /** Checkbox key (e.g. row id). Keeps selection after sort/filter. */
+  getCheckBoxRowValue?: (row: any, rowIndex: number) => string | number;
   hasInput?: boolean;
   emptyContents?: React.ReactNode;
   checkBoxStateList?: checkBoxObjectType;
@@ -51,6 +53,8 @@ export interface ITableProps {
   headerRowClassName?: string;
   /** 바디 행 className (미지정 시 기본 스타일) */
   bodyRowClassName?: string;
+  /** Sticky table header when scrolling */
+  stickyHeader?: boolean;
 }
 
 export interface IFetchOption extends RequestInit {

@@ -3,6 +3,8 @@ import { app, shell, BrowserWindow, ipcMain } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 
+import { stopInterceptGatewayServer } from "./intercept-gateway";
+import { applyMockProxyFromConfig, registerMockProxyIpc, stopMockProxyServer } from "./mock-proxy-server";
 import { registerProjectFsIpc } from "./project-fs";
 
 function createWindow(): void {
@@ -55,6 +57,8 @@ app.whenReady().then(() => {
 
   /** IPC는 app.ready 이후에만 등록(Electron 버전에 따른 핸들러 유실 방지) */
   registerProjectFsIpc();
+  registerMockProxyIpc();
+  void applyMockProxyFromConfig();
 
   createWindow();
 
@@ -72,6 +76,11 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  void stopMockProxyServer();
+  void stopInterceptGatewayServer();
 });
 
 // In this file you can include the rest of your app's specific main process

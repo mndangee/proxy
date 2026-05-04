@@ -17,14 +17,14 @@ export default function Table(props: ITableProps) {
   return (
     <div className={props.className}>
       {/* table header */}
-      <div className={headerRowClass}>
+      <div className={`${headerRowClass}${props.stickyHeader ? " sticky top-0 z-20 shadow-sm" : ""}`}>
         {props.hasCheckBox && props.checkBoxStateList && props.setCheckBoxStateList && (
           <CheckBox className="w-11 py-4" isAllCheckBox checkBoxStateList={props.checkBoxStateList} setCheckBoxStateList={props.setCheckBoxStateList} />
         )}
 
         {props.header.map((headerItem, headerIdx) => (
           <div
-            key={`table-header-${headerItem}-${headerIdx}`}
+            key={`table-header-${headerIdx}-${headerItem.value}`}
             className="px-5 py-4"
             style={{
               width: headerItem.width,
@@ -43,7 +43,7 @@ export default function Table(props: ITableProps) {
             {props.hasCheckBox && props.checkBoxStateList && props.setCheckBoxStateList && (
               <CheckBox
                 className={`${props.hasInput && "border-y-stroke-dark border-t-1 last:border-b-1"} h-10 w-11 py-4`}
-                value={bodyIdx}
+                value={props.getCheckBoxRowValue ? props.getCheckBoxRowValue(bodyItem, bodyIdx) : bodyIdx}
                 checkBoxStateList={props.checkBoxStateList}
                 setCheckBoxStateList={props.setCheckBoxStateList}
               />

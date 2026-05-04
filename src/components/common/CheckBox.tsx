@@ -83,7 +83,7 @@ export default function CheckBox({ category = "checkbox", size = "medium", ...pr
     event.stopPropagation();
     if (value === undefined) return;
 
-    setCheckBoxStateList((before) => ({ ...before, [value]: !checkBoxStateList[value] }));
+    setCheckBoxStateList((before) => ({ ...before, [value]: !before[value as keyof typeof before] }));
   };
 
   return (

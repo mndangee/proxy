@@ -11,8 +11,11 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false'",
+    "apply-care-sfd": "node scripts/apply-care-sfd-to-project.mjs",
+    "free-port": "node scripts/free-port.mjs",
     "licenses": "node scripts/generate-licenses.js",
     "docs:data-guide-pdf": "npx --yes md-to-pdf docs/data-lifecycle-guide.md",
+    "docs:project-overview-ppt": "node scripts/generate-project-overview-ppt.mjs",
     "start": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite preview'",
     "dev": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite dev'",
     "build": "npm run typecheck && bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite build'",
@@ -27,6 +30,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "adm-zip": "^0.5.17",
     "electron-updater": "^6.3.9",
+    "jszip": "^3.10.1",
     "react-textarea-autosize": "^8.5.9"
   },
   "devDependencies": {
@@ -48,6 +52,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "postcss": "^8.5.6",
+    "pptxgenjs": "^4.0.1",
     "prettier": "^3.7.4",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "react": "^18.3.1",

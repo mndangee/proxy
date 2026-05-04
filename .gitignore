@@ -31,6 +31,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
+# electron-vite / tooling이 만든 일회성 설정 복사본
+electron.vite.config.*.mjs
+
 # oag (generated types)
 /src/types/oag/*
 !/src/types/oag/models/

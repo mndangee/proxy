@@ -5,7 +5,7 @@ import CloseIcon from "@/assets/svg/CloseIcon";
 import ModalMainPortal from "./ModalMainPortal";
 import ModalPortal from "./ModalPortal";
 
-type ModalSizeType = "small" | "medium";
+type ModalSizeType = "small" | "medium" | "large";
 
 export interface ICommonModalProps {
   /** 모달 오픈 유무 */
@@ -28,6 +28,7 @@ export interface ICommonModalProps {
 const modalSize: Record<ModalSizeType, string> = {
   small: "max-w-[400px]",
   medium: "max-w-[560px]",
+  large: "max-w-[980px]",
 };
 
 const ModalContents = (props: ICommonModalProps) => {
@@ -43,7 +44,7 @@ const ModalContents = (props: ICommonModalProps) => {
     <div
       role="dialog"
       aria-modal="true"
-      className={`${modalSize[props.size]} border-border-enabled relative z-[1] w-full overflow-y-auto rounded-4 border bg-background-white shadow-lg`}
+      className={`${modalSize[props.size]} border-border-enabled relative z-[1] w-full max-h-[86vh] overflow-y-auto rounded-4 border bg-background-white shadow-lg`}
       onClick={(e) => e.stopPropagation()}
     >
       {props.children}

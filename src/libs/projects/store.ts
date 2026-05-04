@@ -1,6 +1,6 @@
-import type { ApiEndpoint, AppProxyConfig, LinkedClientEntry, Project } from "@/types";
+import type { ApiEndpoint, AppProxyConfig, AppProxyInterceptGatewayConfig, LinkedClientEntry, MockProfileType, Project } from "@/types";
 
-import { mockEndpointsByProjectId } from "@/libs/datadummy/project";
+import { buildCareTranLookup, findCareForProxyApi, parseSfdModuleInterfaces } from "@/libs/care/sfdModuleInterfaces";
 import { slugify } from "@/libs/slugify";
 
 const LEGACY_STORAGE_KEY = "proxy-app-projects-v1";
@@ -15,13 +15,124 @@ const BROWSER_API_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE
 
 const BROWSER_APP_PROXY_CONFIG_KEY = "proxy-app-config-v1";
 const BROWSER_PROJECT_LINKED_CLIENTS_KEY = "proxy-project-linked-clients-v1";
-const APP_PROXY_CONFIG_FILE_VERSION = 1;
+const APP_PROXY_CONFIG_FILE_VERSION = 2;
+const APP_PROXY_CONFIG_LEGACY_V1 = 1;
+
+function migrateCareGatewayBrowser(g: Record<string, unknown>): AppProxyInterceptGatewayConfig {
+  const lp = typeof g.listenPort === "number" && Number.isFinite(g.listenPort) ? Math.floor(g.listenPort) : 7777;
+  const bp = typeof g.backendPort === "number" && Number.isFinite(g.backendPort) ? Math.floor(g.backendPort) : 7778;
+  let upstreamWorkdir: string | null = null;
+  if ("dummyServerDirectory" in g) {
+    if (g.dummyServerDirectory === null || g.dummyServerDirectory === "") upstreamWorkdir = null;
+    else if (typeof g.dummyServerDirectory === "string") {
+      const t = g.dummyServerDirectory.trim();
+      upstreamWorkdir = t || null;
+    }
+  }
+  return {
+    enabled: Boolean(g.enabled),
+    clientPort: Math.min(65535, Math.max(1, lp)),
+    upstreamPort: Math.min(65535, Math.max(1, bp)),
+    autoStartUpstream: Boolean(g.autoStartDummy),
+    upstreamWorkdir,
+  };
+}
+
+function parseInterceptGatewayBrowser(o: Record<string, unknown>): AppProxyInterceptGatewayConfig {
+  const igRaw = o.interceptGateway;
+  if (igRaw != null && typeof igRaw === "object" && !Array.isArray(igRaw)) {
+    const g = igRaw as Record<string, unknown>;
+    const cp =
+      typeof g.clientPort === "number" && Number.isFinite(g.clientPort)
+        ? Math.floor(g.clientPort)
+        : typeof g.listenPort === "number" && Number.isFinite(g.listenPort)
+          ? Math.floor(g.listenPort)
+          : 7777;
+    const up =
+      typeof g.upstreamPort === "number" && Number.isFinite(g.upstreamPort)
+        ? Math.floor(g.upstreamPort)
+        : typeof g.backendPort === "number" && Number.isFinite(g.backendPort)
+          ? Math.floor(g.backendPort)
+          : 7778;
+    let upstreamWorkdir: string | null = null;
+    if ("upstreamWorkdir" in g) {
+      if (g.upstreamWorkdir === null || g.upstreamWorkdir === "") upstreamWorkdir = null;
+      else if (typeof g.upstreamWorkdir === "string") {
+        const t = g.upstreamWorkdir.trim();
+        upstreamWorkdir = t || null;
+      }
+    } else if ("dummyServerDirectory" in g) {
+      if (g.dummyServerDirectory === null || g.dummyServerDirectory === "") upstreamWorkdir = null;
+      else if (typeof g.dummyServerDirectory === "string") {
+        const t = g.dummyServerDirectory.trim();
+        upstreamWorkdir = t || null;
+      }
+    }
+    const auto =
+      typeof g.autoStartUpstream === "boolean" ? g.autoStartUpstream : typeof g.autoStartDummy === "boolean" ? g.autoStartDummy : false;
+    return {
+      enabled: Boolean(g.enabled),
+      clientPort: Math.min(65535, Math.max(1, cp)),
+      upstreamPort: Math.min(65535, Math.max(1, up)),
+      autoStartUpstream: Boolean(auto),
+      upstreamWorkdir,
+    };
+  }
+  const cgRaw = o.careGateway;
+  if (cgRaw != null && typeof cgRaw === "object" && !Array.isArray(cgRaw)) {
+    return migrateCareGatewayBrowser(cgRaw as Record<string, unknown>);
+  }
+  return {
+    enabled: false,
+    clientPort: 7777,
+    upstreamPort: 7778,
+    autoStartUpstream: false,
+    upstreamWorkdir: null,
+  };
+}
 const DEFAULT_PROXY_SERVER_PORT = 4780;
+
+function coerceBrowserMockTranAliases(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ks = String(k).trim();
+    const vs = typeof v === "string" ? v.trim() : "";
+    if (ks && vs) out[ks] = vs;
+  }
+  return out;
+}
+
+function coerceBrowserMockProfile(raw: unknown): MockProfileType {
+  return raw === "generic-json" ? "generic-json" : "legacy-tran-envelope";
+}
 
 function defaultAppProxyConfig(): AppProxyConfig {
   return {
     version: APP_PROXY_CONFIG_FILE_VERSION,
-    proxyServer: { port: DEFAULT_PROXY_SERVER_PORT, enabled: false },
+    proxyServer: {
+      port: DEFAULT_PROXY_SERVER_PORT,
+      enabled: false,
+      servingFolderName: null,
+      careDummyMobilityPath: null,
+      upstreamAutoStart: false,
+      upstreamServerWorkdir: null,
+      upstreamServerPort: 7778,
+      upstreamServerCommand: null,
+      upstreamNodePath: null,
+      careDummyAutoStart: false,
+      careDummyServerWorkdir: null,
+      careDummyServerPort: 7778,
+    },
+    interceptGateway: {
+      enabled: false,
+      clientPort: 7777,
+      upstreamPort: 7778,
+      autoStartUpstream: false,
+      upstreamWorkdir: null,
+    },
+    mockProfile: "legacy-tran-envelope",
+    mockTranAliases: {},
   };
 }
 
@@ -51,13 +162,99 @@ function readBrowserAppProxyConfig(): AppProxyConfig {
     const data = JSON.parse(raw) as unknown;
     if (!data || typeof data !== "object") return defaultAppProxyConfig();
     const o = data as Record<string, unknown>;
-    if (o.version !== APP_PROXY_CONFIG_FILE_VERSION) return defaultAppProxyConfig();
+    if (o.version !== APP_PROXY_CONFIG_FILE_VERSION && o.version !== APP_PROXY_CONFIG_LEGACY_V1) {
+      return defaultAppProxyConfig();
+    }
     const ps = o.proxyServer;
     if (!ps || typeof ps !== "object") return defaultAppProxyConfig();
     const p = ps as Record<string, unknown>;
     const port = typeof p.port === "number" && Number.isFinite(p.port) ? Math.floor(p.port) : DEFAULT_PROXY_SERVER_PORT;
     const enabled = Boolean(p.enabled);
-    return { version: APP_PROXY_CONFIG_FILE_VERSION, proxyServer: { port: Math.min(65535, Math.max(1, port)), enabled } };
+    let servingFolderName: string | null = null;
+    if ("servingFolderName" in p) {
+      if (p.servingFolderName === null || p.servingFolderName === "") servingFolderName = null;
+      else if (typeof p.servingFolderName === "string") {
+        const t = p.servingFolderName.trim();
+        servingFolderName = t || null;
+      }
+    }
+    let careDummyMobilityPath: string | null = null;
+    if ("careDummyMobilityPath" in p) {
+      if (p.careDummyMobilityPath === null || p.careDummyMobilityPath === "") careDummyMobilityPath = null;
+      else if (typeof p.careDummyMobilityPath === "string") {
+        const t = p.careDummyMobilityPath.trim();
+        careDummyMobilityPath = t || null;
+      }
+    }
+    const careDummyAutoStart = Boolean(p.careDummyAutoStart);
+    let careDummyServerWorkdir: string | null = null;
+    if ("careDummyServerWorkdir" in p) {
+      if (p.careDummyServerWorkdir === null || p.careDummyServerWorkdir === "") careDummyServerWorkdir = null;
+      else if (typeof p.careDummyServerWorkdir === "string") {
+        const t = p.careDummyServerWorkdir.trim();
+        careDummyServerWorkdir = t || null;
+      }
+    }
+    let careDummyServerPort = 7778;
+    if (typeof p.careDummyServerPort === "number" && Number.isFinite(p.careDummyServerPort)) {
+      careDummyServerPort = Math.min(65535, Math.max(1, Math.floor(p.careDummyServerPort)));
+    }
+    const upstreamAutoStart = typeof p.upstreamAutoStart === "boolean" ? p.upstreamAutoStart : careDummyAutoStart;
+    let upstreamServerWorkdir: string | null = null;
+    if ("upstreamServerWorkdir" in p) {
+      if (p.upstreamServerWorkdir === null || p.upstreamServerWorkdir === "") upstreamServerWorkdir = null;
+      else if (typeof p.upstreamServerWorkdir === "string") {
+        const t = p.upstreamServerWorkdir.trim();
+        upstreamServerWorkdir = t || null;
+      }
+    } else {
+      upstreamServerWorkdir = careDummyServerWorkdir;
+    }
+    let upstreamServerPort = careDummyServerPort;
+    if (typeof p.upstreamServerPort === "number" && Number.isFinite(p.upstreamServerPort)) {
+      upstreamServerPort = Math.min(65535, Math.max(1, Math.floor(p.upstreamServerPort)));
+    }
+    let upstreamServerCommand: string | null = null;
+    if ("upstreamServerCommand" in p) {
+      if (p.upstreamServerCommand === null || p.upstreamServerCommand === "") upstreamServerCommand = null;
+      else if (typeof p.upstreamServerCommand === "string") {
+        const t = p.upstreamServerCommand.trim();
+        upstreamServerCommand = t || null;
+      }
+    }
+    let upstreamNodePath: string | null = null;
+    if ("upstreamNodePath" in p) {
+      if (p.upstreamNodePath === null || p.upstreamNodePath === "") upstreamNodePath = null;
+      else if (typeof p.upstreamNodePath === "string") {
+        const t = p.upstreamNodePath.trim();
+        upstreamNodePath = t || null;
+      }
+    }
+    const interceptGateway = parseInterceptGatewayBrowser(o);
+
+    const mockTranAliases = coerceBrowserMockTranAliases(o.mockTranAliases);
+    const mockProfile = coerceBrowserMockProfile(o.mockProfile);
+
+    return {
+      version: APP_PROXY_CONFIG_FILE_VERSION,
+      proxyServer: {
+        port: Math.min(65535, Math.max(1, port)),
+        enabled,
+        servingFolderName,
+        careDummyMobilityPath,
+        upstreamAutoStart,
+        upstreamServerWorkdir,
+        upstreamServerPort,
+        upstreamServerCommand,
+        upstreamNodePath,
+        careDummyAutoStart,
+        careDummyServerWorkdir,
+        careDummyServerPort,
+      },
+      interceptGateway,
+      mockProfile,
+      mockTranAliases,
+    };
   } catch {
     return defaultAppProxyConfig();
   }
@@ -144,6 +341,7 @@ interface ProjectsDiskApi {
   listApis: (folderName: string) => Promise<unknown>;
   addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
   updateApi: (folderName: string, apiId: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
+  syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string) => Promise<unknown>;
   deleteApi: (folderName: string, apiId: string) => Promise<unknown>;
   getResponsesStore: (folderName: string) => Promise<unknown>;
   upsertApiResponse: (
@@ -158,6 +356,41 @@ interface ProjectsDiskApi {
     },
   ) => Promise<unknown>;
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<unknown>;
+  importApisJsonPick: (
+    folderName: string,
+  ) => Promise<
+    | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
+    | { ok: false; error: string; errors?: string[] }
+  >;
+  getAppProxyConfig: () => Promise<unknown>;
+  setAppProxyConfig: (partial: {
+    proxyServer?: {
+      port?: number;
+      enabled?: boolean;
+      servingFolderName?: string | null;
+      careDummyMobilityPath?: string | null;
+      upstreamAutoStart?: boolean;
+      upstreamServerWorkdir?: string | null;
+      upstreamServerPort?: number;
+      upstreamServerCommand?: string | null;
+      upstreamNodePath?: string | null;
+      careDummyAutoStart?: boolean;
+      careDummyServerWorkdir?: string | null;
+      careDummyServerPort?: number;
+    };
+    interceptGateway?: {
+      enabled?: boolean;
+      clientPort?: number;
+      upstreamPort?: number;
+      autoStartUpstream?: boolean;
+      upstreamWorkdir?: string | null;
+    };
+    careGateway?: Record<string, unknown>;
+    mockTranAliases?: Record<string, string> | null;
+    mockProfile?: MockProfileType;
+  }) => Promise<unknown>;
+  setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<unknown>;
+  getMockProxyStatus: () => Promise<unknown>;
 }
 
 function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
@@ -177,9 +410,11 @@ function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
     typeof p.addApi === "function" &&
     typeof p.updateApi === "function" &&
     typeof p.deleteApi === "function" &&
+    typeof p.syncApisFromSfdModule === "function" &&
     typeof p.getResponsesStore === "function" &&
     typeof p.upsertApiResponse === "function" &&
     typeof p.deleteApiResponse === "function" &&
+    typeof p.importApisJsonPick === "function" &&
     typeof p.getAppProxyConfig === "function" &&
     typeof p.setAppProxyConfig === "function" &&
     typeof p.setLinkedClients === "function"
@@ -207,13 +442,17 @@ function getProjectsApi(): ProjectsDiskApi | null {
     listApis: (folderName) => ipc.invoke("project-fs:listApis", folderName),
     addApi: (folderName, payload) => ipc.invoke("project-fs:addApi", folderName, payload),
     updateApi: (folderName, apiId, payload) => ipc.invoke("project-fs:updateApi", folderName, apiId, payload),
+    syncApisFromSfdModule: (folderName, sfdAbsolutePath) =>
+      ipc.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
     deleteApi: (folderName, apiId) => ipc.invoke("project-fs:deleteApi", folderName, apiId),
     getResponsesStore: (folderName) => ipc.invoke("project-fs:getResponsesStore", folderName),
     upsertApiResponse: (folderName, apiName, payload) => ipc.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
     deleteApiResponse: (folderName, apiName, responseValue) => ipc.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
+    importApisJsonPick: (folderName) => ipc.invoke("project-fs:importApisJsonPick", folderName),
     getAppProxyConfig: () => ipc.invoke("project-fs:getAppProxyConfig"),
     setAppProxyConfig: (partial) => ipc.invoke("project-fs:setAppProxyConfig", partial),
     setLinkedClients: (payload) => ipc.invoke("project-fs:setLinkedClients", payload),
+    getMockProxyStatus: () => ipc.invoke("mock-proxy:status"),
   };
 }
 
@@ -313,6 +552,74 @@ function diskRowToEndpoint(row: DiskApiRow): ApiEndpoint {
     name: row.name,
     lastModified: row.updatedAt,
     updatedAt: row.updatedAt,
+    createdAt: row.createdAt,
+  };
+}
+
+function compareEndpointsByCreatedAt(a: ApiEndpoint, b: ApiEndpoint): number {
+  const ta = Date.parse(a.createdAt?.trim() ?? "") || 0;
+  const tb = Date.parse(b.createdAt?.trim() ?? "") || 0;
+  if (ta !== tb) return ta - tb;
+  return a.id.localeCompare(b.id);
+}
+
+/** API 등록일(`createdAt`) 기준 정렬 — 목록 UI용 */
+export function sortApiEndpointsByCreatedAt(endpoints: ApiEndpoint[], order: "asc" | "desc"): ApiEndpoint[] {
+  return [...endpoints].sort((a, b) => {
+    const cmp = compareEndpointsByCreatedAt(a, b);
+    return order === "asc" ? cmp : -cmp;
+  });
+}
+
+function compareEndpointsByModifiedAt(a: ApiEndpoint, b: ApiEndpoint): number {
+  const ta = Date.parse((a.updatedAt ?? a.lastModified)?.trim() ?? "") || 0;
+  const tb = Date.parse((b.updatedAt ?? b.lastModified)?.trim() ?? "") || 0;
+  if (ta !== tb) return ta - tb;
+  return a.id.localeCompare(b.id);
+}
+
+/** Sort by last modified (`updatedAt` / `lastModified`). */
+export function sortApiEndpointsByModifiedAt(endpoints: ApiEndpoint[], order: "asc" | "desc"): ApiEndpoint[] {
+  return [...endpoints].sort((a, b) => {
+    const cmp = compareEndpointsByModifiedAt(a, b);
+    return order === "asc" ? cmp : -cmp;
+  });
+}
+
+/** Selected API metadata and saved responses for JSON export. */
+export interface ApiEndpointsExportBundle {
+  version: 1;
+  format: "dataforge-api-bundle";
+  exportedAt: string;
+  projectId: string;
+  projectName: string;
+  items: {
+    method: string;
+    tran: string;
+    description: string;
+    name: string;
+    createdAt?: string;
+    updatedAt?: string;
+    responses: SavedApiResponseRow[];
+  }[];
+}
+
+export function buildApiEndpointsExportBundle(project: Pick<Project, "id" | "name">, endpoints: ApiEndpoint[]): ApiEndpointsExportBundle {
+  return {
+    version: 1,
+    format: "dataforge-api-bundle",
+    exportedAt: new Date().toISOString(),
+    projectId: project.id,
+    projectName: project.name,
+    items: endpoints.map((e) => ({
+      method: e.method,
+      tran: e.tran,
+      description: e.description,
+      name: e.name,
+      createdAt: e.createdAt,
+      updatedAt: e.updatedAt ?? e.lastModified,
+      responses: getSavedApiResponsesForApi(e.name),
+    })),
   };
 }
 
@@ -734,17 +1041,19 @@ export async function deleteSavedApiResponse(projectId: string, apiName: string,
   }
 }
 
-/** 디스크·브라우저 저장 API + 데모(mock) ID 목록 */
+/** 디스크·브라우저에 저장된 API 목록 (데모/mock 폴백 없음). 등록일(`createdAt`) 오름차순. */
 export function getEndpointsForProject(projectId: string): ApiEndpoint[] {
+  let list: ApiEndpoint[];
   if (Object.prototype.hasOwnProperty.call(diskEndpointsCache, projectId)) {
-    return diskEndpointsCache[projectId] ?? [];
-  }
-  if (typeof window !== "undefined" && !getProjectsApi()) {
+    list = diskEndpointsCache[projectId] ?? [];
+  } else if (typeof window !== "undefined" && !getProjectsApi()) {
     const rows = readBrowserApisRows(projectId);
     diskEndpointsCache[projectId] = rows.map(diskRowToEndpoint);
-    return diskEndpointsCache[projectId];
+    list = diskEndpointsCache[projectId] ?? [];
+  } else {
+    return [];
   }
-  return mockEndpointsByProjectId[projectId] ?? [];
+  return [...list].sort(compareEndpointsByCreatedAt);
 }
 
 export function getProjectForApiName(apiName: string): Project | null {
@@ -818,6 +1127,9 @@ export function formatAddApiUserError(code: string): string {
     "update-failed": "API를 수정하지 못했습니다.",
     "delete-failed": "API를 삭제하지 못했습니다.",
     "ipc-not-registered": "메인 프로세스에 API 저장 기능이 연결되지 않았습니다. 앱을 완전히 종료한 뒤 `npm run dev`로 다시 실행하거나 `npm run build` 후 실행해 주세요.",
+    "no-valid-json": "추가할 수 있는 JSON이 없습니다. 파일명(확장자 제외)이 API 이름이 됩니다.",
+    cancelled: "취소되었습니다.",
+    "import-failed": "JSON 가져오기에 실패했습니다.",
   };
   return ko[code] ?? `API를 저장할 수 없습니다. (${code})`;
 }
@@ -909,6 +1221,7 @@ export async function updateProjectApiEndpoint(
     if (browserHasDuplicateName(items, nameTrim, apiId)) return { ok: false, error: "duplicate-api-name" };
     const now = new Date().toISOString();
     const prev = items[idx];
+    const oldName = prev.name.trim();
     items[idx] = {
       ...prev,
       method: methodRaw,
@@ -919,6 +1232,23 @@ export async function updateProjectApiEndpoint(
     };
     writeBrowserApisRows(projectId, items);
     diskEndpointsCache[projectId] = items.map(diskRowToEndpoint);
+
+    if (oldName !== nameTrim) {
+      const all = readAllBrowserResponsesMap();
+      const proj = { ...(all[projectId] ?? {}) };
+      if (Object.prototype.hasOwnProperty.call(proj, oldName)) {
+        const moved = proj[oldName];
+        if (moved != null && moved.length > 0) {
+          proj[nameTrim] = [...moved, ...(proj[nameTrim] ?? [])];
+        }
+        delete proj[oldName];
+        all[projectId] = proj;
+        writeAllBrowserResponsesMap(all);
+        savedResponsesCache[projectId] = proj;
+        notifySavedApiResponsesChanged();
+      }
+    }
+
     notifyProjectApisChanged();
     return { ok: true };
   }
@@ -933,8 +1263,78 @@ export async function updateProjectApiEndpoint(
     /* keep */
   }
   await refreshProjectApisFromDisk(projectId);
+  await refreshSavedResponsesFromDisk(projectId);
   notifyProjectsChanged();
   return { ok: true };
+}
+
+/**
+ * Care `common/core/Sfd.module.js`의 interfaces와 비교해,
+ * proxy API의 **트랜(`tran`) 또는 API 이름(`name`)** 이 care `tranId`와 같으면(공백·대소문자 무시)
+ * `name`을 module **키**, `description`을 **desc**로 맞춤.
+ * Electron + 절대 경로가 있으면 한 번에 디스크 반영; 그 외에는 파일 내용(`sourceText`)으로 갱신.
+ */
+export async function syncProjectApisFromCareSfd(
+  projectId: string,
+  opts: { filePath?: string; sourceText?: string },
+): Promise<{ ok: true; updated: number; skipped: string[] } | { ok: false; error: string }> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+
+  const pathTrim = opts.filePath?.trim();
+  const disk = getProjectsApi();
+
+  if (disk && pathTrim && typeof (disk as { syncApisFromSfdModule?: unknown }).syncApisFromSfdModule === "function") {
+    const folder = p.folderName?.trim();
+    if (!folder) return { ok: false, error: "no-folder" };
+    try {
+      const raw = await (disk as { syncApisFromSfdModule: (f: string, path: string) => Promise<unknown> }).syncApisFromSfdModule(
+        folder,
+        pathTrim,
+      );
+      const res = raw as { ok?: boolean; updated?: number; skipped?: string[]; error?: string };
+      if (!res.ok) return { ok: false, error: res.error ?? "sync-failed" };
+      try {
+        projectsCache = ((await disk.list()) as unknown[]).map((m) => manifestToProject(m as ManifestLike));
+      } catch {
+        /* keep */
+      }
+      await refreshProjectApisFromDisk(projectId);
+      await refreshSavedResponsesFromDisk(projectId);
+      notifyProjectsChanged();
+      return { ok: true, updated: Number(res.updated) || 0, skipped: Array.isArray(res.skipped) ? res.skipped : [] };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/no handler registered/i.test(msg)) return { ok: false, error: "ipc-not-registered" };
+      return { ok: false, error: msg };
+    }
+  }
+
+  const text = opts.sourceText?.trim();
+  if (!text) return { ok: false, error: "no-source" };
+
+  const careLookup = buildCareTranLookup(parseSfdModuleInterfaces(text));
+  const endpoints = getEndpointsForProject(projectId);
+  let updated = 0;
+  const skipped: string[] = [];
+
+  for (const e of endpoints) {
+    const care = findCareForProxyApi(careLookup, e);
+    if (!care) continue;
+    const nk = care.key.trim();
+    const desc = care.desc.trim() || e.description.trim();
+    if (e.name.trim() === nk && e.description.trim() === desc) continue;
+    const r = await updateProjectApiEndpoint(projectId, e.id, {
+      method: e.method,
+      tran: e.tran,
+      description: desc,
+      name: nk,
+    });
+    if (!r.ok) skipped.push(`${e.tran.trim() || e.name.trim()}: ${r.error}`);
+    else updated += 1;
+  }
+
+  return { ok: true, updated, skipped };
 }
 
 export async function deleteProjectApiEndpoint(projectId: string, apiId: string): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -1034,6 +1434,37 @@ export function hasProjectDiskApi(): boolean {
   return Boolean(getProjectsApi());
 }
 
+export type MockProxyStatus = {
+  listening: boolean;
+  port: number | null;
+  lastError?: string;
+  interceptGateway?: { listening: boolean; port: number | null; lastError?: string };
+  upstreamSpawn?: { running: boolean; lastError?: string };
+  careMockSpawn?: { running: boolean; lastError?: string };
+};
+
+/** Electron 전용 — 브라우저 단독 실행 시 null */
+export async function getMockProxyStatus(): Promise<MockProxyStatus | null> {
+  if (typeof window === "undefined") return null;
+  const disk = window.api?.projects as { getMockProxyStatus?: () => Promise<MockProxyStatus> } | undefined;
+  if (disk && typeof disk.getMockProxyStatus === "function") {
+    try {
+      return await disk.getMockProxyStatus();
+    } catch {
+      return null;
+    }
+  }
+  const ipc = window.electron?.ipcRenderer;
+  if (ipc && typeof ipc.invoke === "function") {
+    try {
+      return (await ipc.invoke("mock-proxy:status")) as MockProxyStatus;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function getAppProxyConfig(): Promise<AppProxyConfig> {
   const disk = getProjectsApi();
   if (disk && typeof disk.getAppProxyConfig === "function") {
@@ -1047,7 +1478,33 @@ export async function getAppProxyConfig(): Promise<AppProxyConfig> {
 }
 
 export async function setAppProxyConfig(
-  partial: { proxyServer?: { port?: number; enabled?: boolean } },
+  partial: {
+    proxyServer?: {
+      port?: number;
+      enabled?: boolean;
+      servingFolderName?: string | null;
+      careDummyMobilityPath?: string | null;
+      upstreamAutoStart?: boolean;
+      upstreamServerWorkdir?: string | null;
+      upstreamServerPort?: number;
+      upstreamServerCommand?: string | null;
+      upstreamNodePath?: string | null;
+      careDummyAutoStart?: boolean;
+      careDummyServerWorkdir?: string | null;
+      careDummyServerPort?: number;
+    };
+    interceptGateway?: {
+      enabled?: boolean;
+      clientPort?: number;
+      upstreamPort?: number;
+      autoStartUpstream?: boolean;
+      upstreamWorkdir?: string | null;
+    };
+    /** @deprecated IPC 호환 */
+    careGateway?: Record<string, unknown>;
+    mockTranAliases?: Record<string, string> | null;
+    mockProfile?: MockProfileType;
+  },
 ): Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }> {
   const disk = getProjectsApi();
   if (disk && typeof disk.setAppProxyConfig === "function") {
@@ -1056,6 +1513,120 @@ export async function setAppProxyConfig(
     return { ok: false, error: res?.error ?? "save-failed" };
   }
   const cur = readBrowserAppProxyConfig();
+  const ps = partial.proxyServer;
+  let servingFolderName = cur.proxyServer.servingFolderName ?? null;
+  if (ps && "servingFolderName" in ps) {
+    if (ps.servingFolderName === null || ps.servingFolderName === "") servingFolderName = null;
+    else if (typeof ps.servingFolderName === "string") {
+      const t = ps.servingFolderName.trim();
+      servingFolderName = t || null;
+    }
+  }
+  let careDummyMobilityPath = cur.proxyServer.careDummyMobilityPath ?? null;
+  let careDummyAutoStart = Boolean(cur.proxyServer.careDummyAutoStart);
+  let careDummyServerWorkdir = cur.proxyServer.careDummyServerWorkdir ?? null;
+  let careDummyServerPort =
+    typeof cur.proxyServer.careDummyServerPort === "number" && Number.isFinite(cur.proxyServer.careDummyServerPort)
+      ? Math.min(65535, Math.max(1, Math.floor(cur.proxyServer.careDummyServerPort)))
+      : 7778;
+  let upstreamAutoStart = typeof cur.proxyServer.upstreamAutoStart === "boolean" ? cur.proxyServer.upstreamAutoStart : careDummyAutoStart;
+  let upstreamServerWorkdir = cur.proxyServer.upstreamServerWorkdir ?? careDummyServerWorkdir;
+  let upstreamServerPort =
+    typeof cur.proxyServer.upstreamServerPort === "number" && Number.isFinite(cur.proxyServer.upstreamServerPort)
+      ? Math.min(65535, Math.max(1, Math.floor(cur.proxyServer.upstreamServerPort)))
+      : careDummyServerPort;
+  let upstreamServerCommand = cur.proxyServer.upstreamServerCommand ?? null;
+  let upstreamNodePath = cur.proxyServer.upstreamNodePath ?? null;
+  if (ps && "careDummyMobilityPath" in ps) {
+    if (ps.careDummyMobilityPath === null || ps.careDummyMobilityPath === "") careDummyMobilityPath = null;
+    else if (typeof ps.careDummyMobilityPath === "string") {
+      const t = ps.careDummyMobilityPath.trim();
+      careDummyMobilityPath = t || null;
+    }
+  }
+  if (ps && typeof ps.careDummyAutoStart === "boolean") careDummyAutoStart = ps.careDummyAutoStart;
+  if (ps && "careDummyServerWorkdir" in ps) {
+    if (ps.careDummyServerWorkdir === null || ps.careDummyServerWorkdir === "") careDummyServerWorkdir = null;
+    else if (typeof ps.careDummyServerWorkdir === "string") {
+      const t = ps.careDummyServerWorkdir.trim();
+      careDummyServerWorkdir = t || null;
+    }
+  }
+  if (ps && typeof ps.careDummyServerPort === "number" && Number.isFinite(ps.careDummyServerPort)) {
+    careDummyServerPort = Math.min(65535, Math.max(1, Math.floor(ps.careDummyServerPort)));
+  }
+  if (ps && typeof ps.upstreamAutoStart === "boolean") upstreamAutoStart = ps.upstreamAutoStart;
+  if (ps && "upstreamServerWorkdir" in ps) {
+    if (ps.upstreamServerWorkdir === null || ps.upstreamServerWorkdir === "") upstreamServerWorkdir = null;
+    else if (typeof ps.upstreamServerWorkdir === "string") {
+      const t = ps.upstreamServerWorkdir.trim();
+      upstreamServerWorkdir = t || null;
+    }
+  }
+  if (ps && typeof ps.upstreamServerPort === "number" && Number.isFinite(ps.upstreamServerPort)) {
+    upstreamServerPort = Math.min(65535, Math.max(1, Math.floor(ps.upstreamServerPort)));
+  }
+  if (ps && "upstreamServerCommand" in ps) {
+    if (ps.upstreamServerCommand === null || ps.upstreamServerCommand === "") upstreamServerCommand = null;
+    else if (typeof ps.upstreamServerCommand === "string") {
+      const t = ps.upstreamServerCommand.trim();
+      upstreamServerCommand = t || null;
+    }
+  }
+  if (ps && "upstreamNodePath" in ps) {
+    if (ps.upstreamNodePath === null || ps.upstreamNodePath === "") upstreamNodePath = null;
+    else if (typeof ps.upstreamNodePath === "string") {
+      const t = ps.upstreamNodePath.trim();
+      upstreamNodePath = t || null;
+    }
+  }
+
+  let interceptGateway: AppProxyInterceptGatewayConfig = {
+    ...defaultAppProxyConfig().interceptGateway!,
+    ...(cur.interceptGateway ?? {}),
+  };
+  const igIn = partial.interceptGateway ?? partial.careGateway;
+  if (igIn && typeof igIn === "object") {
+    const g = igIn as Record<string, unknown>;
+    if (typeof g.enabled === "boolean") interceptGateway = { ...interceptGateway, enabled: g.enabled };
+    if (typeof g.clientPort === "number" && Number.isFinite(g.clientPort)) {
+      interceptGateway = { ...interceptGateway, clientPort: Math.min(65535, Math.max(1, Math.floor(g.clientPort))) };
+    } else if (typeof g.listenPort === "number" && Number.isFinite(g.listenPort)) {
+      interceptGateway = { ...interceptGateway, clientPort: Math.min(65535, Math.max(1, Math.floor(g.listenPort))) };
+    }
+    if (typeof g.upstreamPort === "number" && Number.isFinite(g.upstreamPort)) {
+      interceptGateway = { ...interceptGateway, upstreamPort: Math.min(65535, Math.max(1, Math.floor(g.upstreamPort))) };
+    } else if (typeof g.backendPort === "number" && Number.isFinite(g.backendPort)) {
+      interceptGateway = { ...interceptGateway, upstreamPort: Math.min(65535, Math.max(1, Math.floor(g.backendPort))) };
+    }
+    if (typeof g.autoStartUpstream === "boolean") interceptGateway = { ...interceptGateway, autoStartUpstream: g.autoStartUpstream };
+    else if (typeof g.autoStartDummy === "boolean") interceptGateway = { ...interceptGateway, autoStartUpstream: g.autoStartDummy };
+    if ("upstreamWorkdir" in g) {
+      const d = g.upstreamWorkdir;
+      if (d === null || d === "") interceptGateway = { ...interceptGateway, upstreamWorkdir: null };
+      else if (typeof d === "string") {
+        const t = d.trim();
+        interceptGateway = { ...interceptGateway, upstreamWorkdir: t || null };
+      }
+    } else if ("dummyServerDirectory" in g) {
+      const d = g.dummyServerDirectory;
+      if (d === null || d === "") interceptGateway = { ...interceptGateway, upstreamWorkdir: null };
+      else if (typeof d === "string") {
+        const t = d.trim();
+        interceptGateway = { ...interceptGateway, upstreamWorkdir: t || null };
+      }
+    }
+  }
+
+  let mockTranAliases = coerceBrowserMockTranAliases(cur.mockTranAliases);
+  if (partial.mockTranAliases !== undefined) {
+    mockTranAliases = partial.mockTranAliases == null ? {} : coerceBrowserMockTranAliases(partial.mockTranAliases);
+  }
+  let mockProfile = coerceBrowserMockProfile(cur.mockProfile);
+  if (partial.mockProfile !== undefined) {
+    mockProfile = coerceBrowserMockProfile(partial.mockProfile);
+  }
+
   const next: AppProxyConfig = {
     version: APP_PROXY_CONFIG_FILE_VERSION,
     proxyServer: {
@@ -1064,7 +1635,20 @@ export async function setAppProxyConfig(
           ? Math.min(65535, Math.max(1, Math.floor(partial.proxyServer.port)))
           : cur.proxyServer.port,
       enabled: partial.proxyServer?.enabled ?? cur.proxyServer.enabled,
+      servingFolderName,
+      careDummyMobilityPath,
+      upstreamAutoStart,
+      upstreamServerWorkdir,
+      upstreamServerPort,
+      upstreamServerCommand,
+      upstreamNodePath,
+      careDummyAutoStart,
+      careDummyServerWorkdir,
+      careDummyServerPort,
     },
+    interceptGateway,
+    mockProfile,
+    mockTranAliases,
   };
   writeBrowserAppProxyConfig(next);
   return { ok: true, config: next };
@@ -1263,6 +1847,46 @@ export async function importSharedProject(): Promise<{ ok: boolean; error?: stri
   notifyProjectsChanged();
   await refreshAllProjectApisFromDisk();
   return { ok: true };
+}
+
+/** Electron: JSON 파일 선택 → 파일명(확장자 제외)=API 이름, 본문=저장 응답 (여러 개 선택 가능) */
+export async function importProjectApisFromJsonPick(
+  projectId: string,
+): Promise<
+  | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
+  | { ok: false; error: string; errors?: string[] }
+> {
+  const p = getStoredProjects().find((x) => x.id === projectId);
+  if (!p) return { ok: false, error: "not-found" };
+  const folder = p.folderName?.trim();
+  if (!folder) return { ok: false, error: "no-folder" };
+  const disk = getProjectsApi();
+  if (!disk || typeof disk.importApisJsonPick !== "function") {
+    return { ok: false, error: "electron-only" };
+  }
+  const raw = await disk.importApisJsonPick(folder);
+  if (!raw || typeof raw !== "object") {
+    return { ok: false, error: "import-failed" };
+  }
+  if (!("ok" in raw) || !raw.ok) {
+    const fail = raw as { error?: string; errors?: string[] };
+    return { ok: false, error: fail.error ?? "import-failed", errors: fail.errors };
+  }
+  const ok = raw as { imported: number; touchedApiNames: string[]; errors: string[] };
+  try {
+    projectsCache = ((await disk.list()) as unknown[]).map((m) => manifestToProject(m as ManifestLike));
+  } catch {
+    /* keep */
+  }
+  await refreshProjectApisFromDisk(projectId);
+  await refreshSavedResponsesFromDisk(projectId);
+  notifyProjectsChanged();
+  return {
+    ok: true,
+    imported: ok.imported,
+    touchedApiNames: ok.touchedApiNames ?? [],
+    errors: ok.errors ?? [],
+  };
 }
 
 export async function exportProjectToFolder(folderName: string): Promise<{ ok: boolean; error?: string; path?: string }> {
