@@ -125,9 +125,9 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
   };
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
+    <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
       <Navigation activeProjectSlug={activeProjectSlug} currentApiName={resolvedApiName} onNewProject={() => (window.location.href = "/")} />
-      <div id="app-main" className="relative flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <NoticeModal isOpen={deleteErrorNotice.open} onClose={() => setDeleteErrorNotice({ open: false, message: "" })} message={deleteErrorNotice.message} anchorMain />
         <ApiJsonImportModal
           isOpen={jsonImportOpen}

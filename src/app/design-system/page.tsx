@@ -204,9 +204,9 @@ export default function DesignSystemPage() {
   }));
 
   return (
-    <>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <Header title="Design System" onCreateProject={() => {}} />
-      <div className={`min-h-screen px-6 py-8`}>
+      <div className={`min-h-0 flex-1 overflow-y-auto px-6 py-8`}>
         <div className="mx-auto w-full max-w-[1200px] space-y-10">
           {/* ---------- SPACING ---------- */}
           <section className={CARD_CLASS}>
@@ -494,7 +494,7 @@ export default function DesignSystemPage() {
           </section>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

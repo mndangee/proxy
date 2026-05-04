@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 // Components
 import Btn from "@/components/common/Btn";
@@ -46,20 +46,120 @@ function createFileName(title: string) {
   return `${safeTitle || "resource"}.json`;
 }
 
-const JSON_FORMAT_ALERT_MESSAGE = "형식이 올바른 JSON이 아닙니다. 응답 에디터 내용을 확인해 주세요.";
+const JSON_FORMAT_NOTICE_MESSAGE = "형식 오류\n\n형식이 올바른 JSON이 아닙니다. 응답 에디터 내용을 확인해 주세요.";
 
-function isValidConfigurationJson(raw: string): boolean {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    JSON.parse(trimmed);
-    return true;
-  } catch {
-    return false;
+/** 문자열 리터럴 밖에서만 동작 — 객체·배열 마지막 항목 뒤 후행 쉼표 제거 */
+function stripTrailingCommasOutsideStrings(input: string): string {
+  const out: string[] = [];
+  let i = 0;
+  let inString = false;
+  let escape = false;
+  while (i < input.length) {
+    const c = input[i];
+    if (escape) {
+      out.push(c);
+      escape = false;
+      i += 1;
+      continue;
+    }
+    if (inString) {
+      out.push(c);
+      if (c === "\\") escape = true;
+      else if (c === '"') inString = false;
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      out.push(c);
+      inString = true;
+      i += 1;
+      continue;
+    }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < input.length && /\s/.test(input[j]!)) j += 1;
+      const next = input[j];
+      if (next === "}" || next === "]") {
+        i += 1;
+        continue;
+      }
+    }
+    out.push(c);
+    i += 1;
   }
+  return out.join("");
 }
 
-function EditableCodeEditor({ value, onChange }: { value: string; onChange: (nextValue: string) => void }) {
+/** 닫히지 않은 `{` `[` 를 스택 순서대로 닫아 줌 (누락된 `}` 등) */
+function appendMissingClosingBrackets(input: string): string {
+  const stack: ("{" | "[")[] = [];
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < input.length; i += 1) {
+    const c = input[i]!;
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (c === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+    if (c === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (c === "{") stack.push("{");
+    else if (c === "[") stack.push("[");
+    else if (c === "}") {
+      if (stack.length && stack[stack.length - 1] === "{") stack.pop();
+    } else if (c === "]") {
+      if (stack.length && stack[stack.length - 1] === "[") stack.pop();
+    }
+  }
+  let suffix = "";
+  for (let k = stack.length - 1; k >= 0; k -= 1) {
+    suffix += stack[k] === "{" ? "}" : "]";
+  }
+  return input + suffix;
+}
+
+type ParseConfigurationResult = { ok: true; parsed: unknown; canonical: string } | { ok: false };
+
+/** 엄격 JSON 실패 시 후행 쉼표·누락 닫는 괄호 보정 후 파싱 */
+function parseConfigurationJson(raw: string): ParseConfigurationResult {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false };
+
+  const candidates = new Set<string>([
+    trimmed,
+    stripTrailingCommasOutsideStrings(trimmed),
+    appendMissingClosingBrackets(trimmed),
+    appendMissingClosingBrackets(stripTrailingCommasOutsideStrings(trimmed)),
+    stripTrailingCommasOutsideStrings(appendMissingClosingBrackets(trimmed)),
+  ]);
+
+  for (const s of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(s);
+      return { ok: true, parsed, canonical: JSON.stringify(parsed, null, 2) };
+    } catch {
+      /* try next */
+    }
+  }
+  return { ok: false };
+}
+
+function EditableCodeEditor({
+  value,
+  onChange,
+  onBlurFormat,
+}: {
+  value: string;
+  onChange: (nextValue: string) => void;
+  onBlurFormat?: () => void;
+}) {
   const lines = useMemo(() => value.split("\n"), [value]);
 
   return (
@@ -79,6 +179,7 @@ function EditableCodeEditor({ value, onChange }: { value: string; onChange: (nex
             className="typo-body-2-normal caret-label-normal absolute inset-0 min-h-[420px] w-full resize-none bg-transparent p-5 font-mono leading-6 text-transparent outline-none"
             value={value}
             onChange={(event) => onChange(event.target.value)}
+            onBlur={() => onBlurFormat?.()}
             onKeyDown={(event) => {
               if (event.key !== "Tab") return;
 
@@ -156,11 +257,11 @@ export default function ApiJsonPage() {
   const [noticeMessage, setNoticeMessage] = useState("");
   const [noticeNavigateApi, setNoticeNavigateApi] = useState<string | null>(null);
 
-  const showNotice = (message: string, navigateToApiAfterClose?: string | null) => {
+  const showNotice = useCallback((message: string, navigateToApiAfterClose?: string | null) => {
     setNoticeMessage(message);
     setNoticeNavigateApi(navigateToApiAfterClose ?? null);
     setNoticeOpen(true);
-  };
+  }, []);
 
   const closeNotice = () => {
     const nav = noticeNavigateApi;
@@ -169,14 +270,26 @@ export default function ApiJsonPage() {
     if (nav) window.location.href = `/api/${encodeURIComponent(nav)}`;
   };
 
+  const formatConfigurationOnEditorBlur = useCallback(() => {
+    const raw = configuration.trim();
+    if (!raw) return;
+    const r = parseConfigurationJson(configuration);
+    if (r.ok) {
+      if (r.canonical !== configuration) setConfiguration(r.canonical);
+      return;
+    }
+    showNotice(JSON_FORMAT_NOTICE_MESSAGE);
+  }, [configuration, showNotice]);
+
   const saveResponse = async () => {
     const apiKey = sourceApiName.trim();
     if (!apiKey) {
       showNotice("API 이름이 없습니다.");
       return;
     }
-    if (!isValidConfigurationJson(configuration)) {
-      window.alert(JSON_FORMAT_ALERT_MESSAGE);
+    const parsedConfig = parseConfigurationJson(configuration);
+    if (!parsedConfig.ok) {
+      showNotice(JSON_FORMAT_NOTICE_MESSAGE);
       return;
     }
     const project = getProjectForApiName(apiKey);
@@ -191,20 +304,22 @@ export default function ApiJsonPage() {
       label: resourceTitle.trim() || apiKey,
       description: description.trim(),
       editorType,
-      configuration,
+      configuration: parsedConfig.canonical,
     });
     if (!result.ok) {
       showNotice(formatSaveApiResponseUserError(result.error));
       return;
     }
+    setConfiguration(parsedConfig.canonical);
     markRegisteredApiJsonResponse(apiKey);
     showNotice("저장이 완료되었습니다.", apiKey);
   };
 
   const useAsResponse = () => {
     if (!sourceApiName) return;
-    if (!isValidConfigurationJson(configuration)) {
-      window.alert(JSON_FORMAT_ALERT_MESSAGE);
+    const parsedConfig = parseConfigurationJson(configuration);
+    if (!parsedConfig.ok) {
+      showNotice(JSON_FORMAT_NOTICE_MESSAGE);
       return;
     }
 
@@ -214,19 +329,21 @@ export default function ApiJsonPage() {
       type: responseType.type as "default" | "test" | "error",
       title: resourceTitle || sourceApiName,
       description: description || "사용중",
-      configuration,
+      configuration: parsedConfig.canonical,
     });
+    setConfiguration(parsedConfig.canonical);
     markRegisteredApiJsonResponse(sourceApiName);
 
     window.location.href = `/api/${encodeURIComponent(sourceApiName)}`;
   };
 
   const exportJson = () => {
-    if (!isValidConfigurationJson(configuration)) {
-      window.alert(JSON_FORMAT_ALERT_MESSAGE);
+    const parsedConfig = parseConfigurationJson(configuration);
+    if (!parsedConfig.ok) {
+      showNotice(JSON_FORMAT_NOTICE_MESSAGE);
       return;
     }
-    const parsedConfiguration = JSON.parse(configuration.trim());
+    const parsedConfiguration = parsedConfig.parsed;
     const exportPayload = {
       title: resourceTitle,
       description,
@@ -247,8 +364,8 @@ export default function ApiJsonPage() {
   };
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 overflow-x-hidden">
-      <NoticeModal isOpen={noticeOpen} onClose={closeNotice} message={noticeMessage} />
+    <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
+      <NoticeModal isOpen={noticeOpen} onClose={closeNotice} message={noticeMessage} anchorMain />
       <Navigation
         activeProjectSlug={jsonNavActiveProjectSlug}
         currentApiName={sourceApiName || null}
@@ -256,7 +373,7 @@ export default function ApiJsonPage() {
         onNewProject={() => (window.location.href = "/")}
       />
 
-      <div id="app-main" className="relative flex min-h-full min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled bg-background-white border-b px-6 py-6">
           <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-1">
             <button
@@ -345,7 +462,7 @@ export default function ApiJsonPage() {
                   </div>
                 </div>
 
-                <EditableCodeEditor value={configuration} onChange={setConfiguration} />
+                <EditableCodeEditor value={configuration} onChange={setConfiguration} onBlurFormat={formatConfigurationOnEditorBlur} />
               </section>
             </div>
           </div>

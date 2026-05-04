@@ -5,6 +5,11 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   main: {
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, 'src')
+      }
+    },
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'src/electron/main/index.ts')
@@ -12,6 +17,11 @@ export default defineConfig({
     }
   },
   preload: {
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, 'src')
+      }
+    },
     build: {
       rollupOptions: {
         input: resolve(__dirname, 'src/electron/preload/index.ts')

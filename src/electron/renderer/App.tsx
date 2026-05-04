@@ -149,7 +149,7 @@ function App(): React.JSX.Element {
       {bootReady ? (
         <Page key={locationKey} {...pageProps} />
       ) : (
-        <div className="typo-body-1-normal text-label-assistant flex min-h-[40vh] items-center justify-center">불러오는 중…</div>
+        <div className="typo-body-1-normal text-label-assistant flex min-h-0 flex-1 items-center justify-center">불러오는 중…</div>
       )}
     </RootLayout>
   )

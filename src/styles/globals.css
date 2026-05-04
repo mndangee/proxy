@@ -91,15 +91,117 @@
   html,
   body {
     margin: 0;
-    min-height: 100vh;
+    height: min(100vh, 1080px);
+    max-height: 1080px;
     min-width: 1600px;
-    overflow-x: hidden;
+    overflow: hidden;
     font-family: "Pretendard", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
   #root {
-    min-height: 100vh;
+    height: 100%;
+    min-height: 0;
     min-width: 1600px;
-    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 스크롤바 — 트랙 투명, 썸은 스크롤 중(ds-scrollbar-active)에만 표시 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 9999px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    min-height: 32px;
+    transition: background-color 0.42s ease;
+  }
+
+  .ds-scrollbar-active {
+    scrollbar-color: var(--color-gray-400) transparent;
+  }
+
+  .ds-scrollbar-active::-webkit-scrollbar-thumb {
+    background: var(--color-gray-400);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 9999px;
+    min-height: 32px;
+    transition: background-color 0.14s ease;
+  }
+
+  .ds-scrollbar-active::-webkit-scrollbar-thumb:hover {
+    background: var(--color-gray-500);
+  }
+}
+
+/* 어두운 패널(내비 등) — 스크롤 중에만 밝은 썸 */
+@layer components {
+  .ds-scrollbar-dark {
+    scrollbar-color: transparent transparent;
+  }
+
+  .ds-scrollbar-dark::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 9999px;
+  }
+
+  .ds-scrollbar-dark::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 9999px;
+    min-height: 32px;
+    transition: background-color 0.42s ease;
+  }
+
+  .ds-scrollbar-dark.ds-scrollbar-active {
+    scrollbar-color: rgba(255, 255, 255, 0.38) transparent;
+  }
+
+  .ds-scrollbar-dark.ds-scrollbar-active::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.28);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 9999px;
+    min-height: 32px;
+    transition: background-color 0.14s ease;
+  }
+
+  .ds-scrollbar-dark.ds-scrollbar-active::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.42);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  /* 스크롤은 유지, 트랙/썸 미표시 (전역 active 클래스와 무관) */
+  .ds-scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .ds-scrollbar-none::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 }

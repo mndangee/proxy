@@ -93,7 +93,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const [favoritesOnlyInNav, setFavoritesOnlyInNav] = useState(false);
   const [apisTick, setApisTick] = useState(0);
 
-  const testInput = useInput();
+  const navSearchInput = useInput();
   const pathname = typeof window !== "undefined" ? window.location.pathname : "";
   const isApiJsonPage = pathname === "/api/json";
   const isApiDetailRoute = pathname.startsWith("/api/") && !isApiJsonPage;
@@ -101,6 +101,17 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const resolvedApiName = currentApiName ?? fallbackApiName;
   const currentApiProject = resolvedApiName ? getProjectForApiName(resolvedApiName) : null;
   const apiEndpointItems = useMemo(() => (currentApiProject ? getEndpointsForProject(currentApiProject.id) : []), [currentApiProject?.id, resolvedApiName, apisTick]);
+  const filteredApiEndpointItems = useMemo(() => {
+    if (!isApiDetailRoute) return apiEndpointItems;
+    const q = navSearchInput.value.trim().toLowerCase();
+    if (!q) return apiEndpointItems;
+    return apiEndpointItems.filter((e) => {
+      const name = (e.name ?? "").toLowerCase();
+      const tran = (e.tran ?? "").toLowerCase();
+      const description = (e.description ?? "").toLowerCase();
+      return name.includes(q) || tran.includes(q) || description.includes(q);
+    });
+  }, [apiEndpointItems, isApiDetailRoute, navSearchInput.value]);
 
   const showProjectListInNav = !isApiJsonPage && !isApiDetailRoute;
   const hasFavoriteProjects = navProjects.some((p) => p.isFavorite);
@@ -121,12 +132,12 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
 
   return (
     <div
-      className={`flex min-h-screen shrink-0 flex-col self-stretch border-r bg-[#2D2D2D] transition-[width,padding] duration-200 ease-in-out ${
+      className={`flex h-full max-h-full min-h-0 shrink-0 flex-col self-stretch overflow-hidden border-r bg-[#2D2D2D] transition-[width,padding] duration-200 ease-in-out ${
         isNavOpen ? "w-[320px] p-7" : "w-14 overflow-hidden px-3 py-7"
       }`}
     >
       {/* 상단: 즐겨찾기·홈 · 토글 */}
-      <div className={isNavOpen ? "flex items-center justify-between gap-2" : "flex flex-col items-center gap-6"}>
+      <div className={`shrink-0 ${isNavOpen ? "flex items-center justify-between gap-2" : "flex flex-col items-center gap-6"}`}>
         {isNavOpen ? (
           <div className="flex items-center gap-3">
             <a href="/" className="text-label-assistant hover:text-label-common rounded-md p-2 transition-colors hover:bg-white/10" aria-label="홈">
@@ -174,40 +185,52 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
         ) : null}
       </div>
 
+      {!isNavOpen ? <div className="min-h-0 flex-1" aria-hidden /> : null}
+
       {isNavOpen && (
-        <>
-          <div className="mt-5">
-            <Input {...testInput} width="100%" placeholder="검색" />
+        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-5">
+          <div className="shrink-0">
+            <Input
+              value={navSearchInput.value}
+              onChange={navSearchInput.onChange}
+              error={navSearchInput.error}
+              width="100%"
+              placeholder={isApiDetailRoute ? "API 이름, 트랜, 설명 검색" : "검색"}
+            />
           </div>
 
-          {/* 프로젝트 목록 */}
-          <div className="my-5 flex min-h-0 flex-1 flex-col overflow-auto">
+          {/* 프로젝트 목록 — 뷰포트(최대 1080px) 높이 초과 시 이 영역만 스크롤 */}
+          <div className="ds-scrollbar-dark flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
             {isApiJsonPage && jsonEditorApiName ? (
               <JsonEditorResponseNav apiName={jsonEditorApiName} />
             ) : isApiDetailRoute && resolvedApiName ? (
               <div className="flex flex-col gap-2">
-                {apiEndpointItems.map((item) => {
-                  const isItemActive = item.name === resolvedApiName;
-                  const callFn = item.tran?.trim() || "—";
-                  const apiTitle = item.name || "—";
-                  const lineClass = `${isItemActive ? "text-[#13A4EC]" : "text-label-assistant"}`;
-                  return (
-                    <a
-                      key={item.id}
-                      href={`/api/${encodeURIComponent(item.name)}`}
-                      title={`${callFn} · ${apiTitle}${item.description ? ` — ${item.description}` : ""}`}
-                      className={`rounded-3 block min-w-0 px-5 py-4 no-underline transition-colors ${
-                        isItemActive ? "bg-[#13A4EC]/10" : "text-label-common bg-white/5 hover:bg-white/10"
-                      }`}
-                    >
-                      <div className={`flex min-w-0 items-center justify-between`}>
-                        <span className={`typo-body-1-normal shrink truncate font-bold ${isItemActive ? "text-[#13A4EC]" : "text-label-common"}`}>{callFn}</span>
-                        <span className="typo-caption-1 text-label-common truncate font-bold">{apiTitle}</span>
-                      </div>
-                      <div className={`${lineClass} text-label-common typo-caption-1 mt-3 truncate font-bold`}>{item.description || "—"}</div>
-                    </a>
-                  );
-                })}
+                {apiEndpointItems.length > 0 && filteredApiEndpointItems.length === 0 ? (
+                  <p className="typo-body-2-normal text-label-assistant px-5 py-4 text-center">검색과 일치하는 API가 없습니다.</p>
+                ) : (
+                  filteredApiEndpointItems.map((item) => {
+                    const isItemActive = item.name === resolvedApiName;
+                    const callFn = item.tran?.trim() || "—";
+                    const apiTitle = item.name || "—";
+                    const lineClass = `${isItemActive ? "text-[#13A4EC]" : "text-label-assistant"}`;
+                    return (
+                      <a
+                        key={item.id}
+                        href={`/api/${encodeURIComponent(item.name)}`}
+                        title={`${callFn} · ${apiTitle}${item.description ? ` — ${item.description}` : ""}`}
+                        className={`rounded-3 block min-w-0 px-5 py-4 no-underline transition-colors ${
+                          isItemActive ? "bg-[#13A4EC]/10" : "text-label-common bg-white/5 hover:bg-white/10"
+                        }`}
+                      >
+                        <div className={`flex min-w-0 items-center justify-between`}>
+                          <span className={`typo-body-1-normal shrink truncate font-bold ${isItemActive ? "text-[#13A4EC]" : "text-label-common"}`}>{apiTitle}</span>
+                          <span className="typo-caption-1 text-label-common truncate font-bold">{callFn}</span>
+                        </div>
+                        <div className={`${lineClass} text-label-common typo-caption-1 mt-3 truncate font-bold`}>{item.description || "—"}</div>
+                      </a>
+                    );
+                  })
+                )}
               </div>
             ) : (
               projectsForNav.map((project) => {
@@ -240,11 +263,13 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
           </div>
 
           {!isApiDetailRoute && !isApiJsonPage && (
-            <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width="100%">
-              프로젝트 생성하기
-            </Btn>
+            <div className="shrink-0">
+              <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width="100%">
+                프로젝트 생성하기
+              </Btn>
+            </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );

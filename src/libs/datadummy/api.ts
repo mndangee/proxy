@@ -84,10 +84,6 @@ export function tryParseApiResponseExportBundle(parsed: unknown): ParsedApiRespo
   };
 }
 
-function stringifyConfiguration(value: unknown) {
-  return JSON.stringify(value, null, 2);
-}
-
 function savedRowToApiItem(row: SavedApiResponseRow): ApiResponseItem {
   const type: ApiResponseKind = row.editorType === "test" ? "test" : row.editorType === "error" ? "error" : "local";
   return {
@@ -99,172 +95,12 @@ function savedRowToApiItem(row: SavedApiResponseRow): ApiResponseItem {
   };
 }
 
-/** 내장 더미 시나리오를 붙이지 않고 디스크/저장소에 있는 응답만 사용하는 API 이름 */
-const API_NAMES_SAVED_RESPONSES_ONLY = new Set(
-  ["gopincert", "gopincertrequest", "goprivatepkicertgen"].map((s) => s.toLowerCase()),
-);
-
-function isSavedResponsesOnlyApiName(apiName: string): boolean {
-  return API_NAMES_SAVED_RESPONSES_ONLY.has(apiName.trim().toLowerCase());
-}
-
-function buildDefaultApiResponseGroups(apiName: string): ApiResponseGroups {
-  return {
-    localResponses: [
-      {
-        type: "local",
-        label: "기본 응답",
-        value: `${apiName}-local-default`,
-        infoText: `${apiName}.json`,
-        description: `${apiName}의 기본 로컬 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "default",
-          source: "local",
-          enabled: true,
-          payload: { status: "ok", code: 200 },
-        }),
-      },
-      {
-        type: "local",
-        label: "대체 응답",
-        value: `${apiName}-local-alt`,
-        infoText: `${apiName}_v2.json`,
-        description: `${apiName}의 대체 로컬 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "alternative",
-          source: "local",
-          enabled: true,
-          payload: { status: "ok", code: 202 },
-        }),
-      },
-      {
-        type: "local",
-        label: "레거시 응답",
-        value: `${apiName}-local-legacy`,
-        infoText: `${apiName}_legacy.json`,
-        description: `${apiName}의 레거시 로컬 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "legacy",
-          source: "local",
-          enabled: false,
-          payload: { status: "legacy", code: 200 },
-        }),
-      },
-    ],
-    testResponses: [
-      {
-        type: "test",
-        label: "임시 응답",
-        value: `${apiName}-test-temp`,
-        infoText: "저장되지 않은 잠시 테스트용으로 사용할 응답",
-        description: `${apiName}의 임시 테스트 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "temp",
-          source: "test",
-          enabled: true,
-          payload: { status: "sandbox", code: 200 },
-        }),
-      },
-      {
-        type: "test",
-        label: "QA 검증 응답",
-        value: `${apiName}-test-qa`,
-        infoText: "QA 환경 검증용 응답 시나리오",
-        description: `${apiName}의 QA 검증용 테스트 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "qa",
-          source: "test",
-          enabled: true,
-          payload: { status: "qa", code: 206 },
-        }),
-      },
-      {
-        type: "test",
-        label: "조건부 응답",
-        value: `${apiName}-test-condition`,
-        infoText: "특정 파라미터 조건에서만 사용하는 응답",
-        description: `${apiName}의 조건부 테스트 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "conditional",
-          source: "test",
-          enabled: true,
-          conditions: { env: "staging", region: "seoul" },
-          payload: { status: "conditional", code: 200 },
-        }),
-      },
-    ],
-    errorResponses: [
-      {
-        type: "error",
-        label: "BVD0030020",
-        value: `${apiName}-error-session`,
-        infoText: "Session이 끊겼습니다.",
-        description: `${apiName}의 세션 만료 에러 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "session_error",
-          source: "error",
-          enabled: true,
-          error: { code: "BVD0030020", message: "Session expired" },
-        }),
-      },
-      {
-        type: "error",
-        label: "BVD0030066",
-        value: `${apiName}-error-range`,
-        infoText: "유효하지 않은 기간 범위입니다.",
-        description: `${apiName}의 범위 검증 에러 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "range_error",
-          source: "error",
-          enabled: true,
-          error: { code: "BVD0030066", message: "Invalid date range" },
-        }),
-      },
-      {
-        type: "error",
-        label: "404.TIMEOUT",
-        value: `${apiName}-error-timeout`,
-        infoText: "응답 대기 시간이 초과되었습니다.",
-        description: `${apiName}의 타임아웃 에러 응답입니다.`,
-        configuration: stringifyConfiguration({
-          resource_id: apiName,
-          response_type: "timeout_error",
-          source: "error",
-          enabled: true,
-          error: { code: "404.TIMEOUT", message: "Gateway timeout" },
-        }),
-      },
-    ],
-  };
-}
-
 export function getApiResponseGroups(apiName: string): ApiResponseGroups {
   const saved = getSavedApiResponsesForApi(apiName).map(savedRowToApiItem);
-  const savedLocal = saved.filter((s) => s.type === "local");
-  const savedTest = saved.filter((s) => s.type === "test");
-  const savedErr = saved.filter((s) => s.type === "error");
-
-  if (isSavedResponsesOnlyApiName(apiName)) {
-    return {
-      localResponses: savedLocal,
-      testResponses: savedTest,
-      errorResponses: savedErr,
-    };
-  }
-
-  const base = buildDefaultApiResponseGroups(apiName);
   return {
-    localResponses: [...savedLocal, ...base.localResponses],
-    testResponses: [...savedTest, ...base.testResponses],
-    errorResponses: [...savedErr, ...base.errorResponses],
+    localResponses: saved.filter((s) => s.type === "local"),
+    testResponses: saved.filter((s) => s.type === "test"),
+    errorResponses: saved.filter((s) => s.type === "error"),
   };
 }
 
@@ -279,14 +115,16 @@ export function getApiResponseItem(apiName: string, value: string | null): ApiRe
 
 export function getDefaultActiveApiResponse(apiName: string): ActiveApiResponseState {
   const groups = getApiResponseGroups(apiName);
-  const fallback = groups.localResponses[0];
+  const fallback = groups.localResponses[0] ?? groups.testResponses[0] ?? groups.errorResponses[0];
+  const t: "default" | "test" | "error" =
+    fallback?.type === "test" ? "test" : fallback?.type === "error" ? "error" : "default";
 
   return {
     apiName,
     responseValue: fallback?.value ?? null,
-    type: "default",
+    type: t,
     title: fallback?.label ?? apiName,
-    description: fallback?.description ?? "사용중",
+    description: fallback?.description ?? "",
     configuration: fallback?.configuration ?? "",
   };
 }
@@ -373,13 +211,10 @@ export function getJsonEditorHrefForSelectedValue(apiName: string, responseValue
 
 const REGISTERED_JSON_KEY_PREFIX = "proxy-api-json-registered:";
 
-/** JSON 편집기에서 「응답으로 사용」으로 저장한 적이 있는지 (API 상세 빈 화면 분기) */
+/** 디스크/브라우저에 저장된 응답이 있을 때만 (내장 더미/템플릿 없음) */
 export function hasRegisteredApiJsonResponse(apiName: string): boolean {
   if (typeof window === "undefined" || !apiName.trim()) return false;
-  if (getSavedApiResponsesForApi(apiName).length > 0) return true;
-  /** pin 계열은 디스크/브라우저 스토어에 저장된 시나리오만 인정 (구버전 localStorage 등록 플래그 무시) */
-  if (isSavedResponsesOnlyApiName(apiName)) return false;
-  return window.localStorage.getItem(`${REGISTERED_JSON_KEY_PREFIX}${apiName.trim()}`) === "1";
+  return getSavedApiResponsesForApi(apiName).length > 0;
 }
 
 export function markRegisteredApiJsonResponse(apiName: string): void {
