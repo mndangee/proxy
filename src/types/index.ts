@@ -1,4 +1,4 @@
-/** 이 Proxy(응답) 프로젝트를 붙일 외부 클라이언트(care 등) */
+/** 프록시를 사용할 프로젝트(연동 앱·클라이언트) 메타 — CORS 등 */
 export interface LinkedClientEntry {
   id: string
   label: string
@@ -46,7 +46,7 @@ export interface AppProxyConfig {
     /** @deprecated 모의 서버는 모든 프로젝트를 탐색하므로 미사용. 이전 설정 파일 호환용 */
     servingFolderName?: string | null
     /**
-     * 폴백 JSON 폴더 절대 경로(또는 `~/...`) — 주로 Care dummy/mobility 호환.
+     * 폴백 JSON 폴더 절대 경로(또는 `~/...`) — 연동 프로젝트의 dummy/mobility 트랜 JSON 등.
      * 스토어에 없을 때 `{tranId}.json` 로드
      */
     careDummyMobilityPath?: string | null
@@ -77,7 +77,7 @@ export interface AppProxyConfig {
   interceptGateway?: AppProxyInterceptGatewayConfig
   /**
    * 모의 서버의 요청 키 추출·응답 포맷 규칙
-   * - legacy-tran-envelope: Care/SFD 스타일(header.tranId, responseMessage 봉투)
+   * - legacy-tran-envelope: 트랜잭션 ID(header.tranId 등) + responseMessage 구조 응답
    * - generic-json: 일반 REST/JSON 스타일(원본 JSON 반환)
    */
   mockProfile?: MockProfileType
@@ -86,6 +86,10 @@ export interface AppProxyConfig {
    * 클라이언트 트랜 ID와 DataForge API 이름이 다를 때 매핑.
    */
   mockTranAliases?: Record<string, string>
+  /**
+   * API 이름(또는 모의 lookup 키)별 응답 지연(ms). Electron 모의 HTTP 서버가 본문 전송 전 대기.
+   */
+  mockApiLatencyMs?: Record<string, number>
 }
 
 export interface Project {

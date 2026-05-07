@@ -18,17 +18,17 @@
 
 ## 주요 기능
 
-| 영역 | 설명 |
-|------|------|
-| **홈 (`/`)** | 저장된 프로젝트 카드 목록, 탭·히스토리 UI |
-| **프로젝트 생성** | 헤더 **「새 프로젝트 만들기」** 또는 사이드바 **「프로젝트 생성하기」** → 전역 모달(`CreateProjectModal`). 이름·설명·즐겨찾기 입력 후 저장 |
-| **프로젝트 상세 (`/project/:slug`)** | 프로젝트 메타·API 엔드포인트 테이블(목 데이터와 연동) |
-| **API 상세 (`/api/:apiName`)** | 응답 그룹 라디오, 활성 응답 표시, JSON 편집기로 이동 |
-| **JSON 편집 (`/api/json`)** | 쿼리(`apiName`, `type`, `responseValue` 등)로 리소스 편집,보내기·「응답으로 사용」 |
-| **내비게이션 (LNB)** | 프로젝트 목록·API 엔드포인트·JSON 편집 응답 트리; 홈·즐겨찾기 필터·접기/펼치기 (아래 **사이드 내비게이션** 참고) |
-| **라이선스 (`/licenses`)** | 오픈소스 라이선스 목록 |
-| **다운로드 · 공유 (`/downloads`)** | 릴리스·ZIP·문서·PPT 링크 모음(팀 공유용) |
-| **디자인 시스템 (`/design-system`)** | 컴포넌트 샘플 |
+| 영역                                 | 설명                                                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **홈 (`/`)**                         | 저장된 프로젝트 카드 목록, 탭·히스토리 UI                                                                                                  |
+| **프로젝트 생성**                    | 헤더 **「새 프로젝트 만들기」** 또는 사이드바 **「프로젝트 생성하기」** → 전역 모달(`CreateProjectModal`). 이름·설명·즐겨찾기 입력 후 저장 |
+| **프로젝트 상세 (`/project/:slug`)** | 프로젝트 메타·API 엔드포인트 테이블(목 데이터와 연동)                                                                                      |
+| **API 상세 (`/api/:apiName`)**       | 응답 그룹 라디오, 활성 응답 표시, JSON 편집기로 이동                                                                                       |
+| **JSON 편집 (`/api/json`)**          | 쿼리(`apiName`, `type`, `responseValue` 등)로 리소스 편집,보내기·「응답으로 사용」                                                         |
+| **내비게이션 (LNB)**                 | 프로젝트 목록·API 엔드포인트·JSON 편집 응답 트리; 홈·즐겨찾기 필터·접기/펼치기 (아래 **사이드 내비게이션** 참고)                           |
+| **라이선스 (`/licenses`)**           | 오픈소스 라이선스 목록                                                                                                                     |
+| **다운로드 · 공유 (`/downloads`)**   | 릴리스·ZIP·문서·PPT 링크 모음(팀 공유용)                                                                                                   |
+| **디자인 시스템 (`/design-system`)** | 컴포넌트 샘플                                                                                                                              |
 
 ### 사이드 내비게이션 (`Navigation.tsx`)
 
@@ -52,20 +52,20 @@
 
 #### 프로젝트 목록 (생성·즐겨찾기·삭제)
 
-| 환경 | 저장 위치 | 비고 |
-|------|-----------|------|
-| **Electron** (preload `window.api.projects` 또는 IPC `project-fs:*` 사용 가능) | **디스크** — 주석 기준 `userData/DataForge-projects` 하위, 프로젝트별 폴더·매니페스트 | 생성/즐겨찾기/삭제/가져오기·내보내기는 IPC로 처리 |
-| **그 외** (순수 브라우저 등) | **localStorage** 키 `proxy-app-projects-v1` — 프로젝트 객체 **JSON 배열** 전체를 직렬화해 저장 | 추가·수정 시 배열을 통째로 다시 저장 |
+| 환경                                                                           | 저장 위치                                                                                      | 비고                                              |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Electron** (preload `window.api.projects` 또는 IPC `project-fs:*` 사용 가능) | **디스크** — 주석 기준 `userData/DataForge-projects` 하위, 프로젝트별 폴더·매니페스트          | 생성/즐겨찾기/삭제/가져오기·내보내기는 IPC로 처리 |
+| **그 외** (순수 브라우저 등)                                                   | **localStorage** 키 `proxy-app-projects-v1` — 프로젝트 객체 **JSON 배열** 전체를 직렬화해 저장 | 추가·수정 시 배열을 통째로 다시 저장              |
 
 #### 저장 경로 (디스크 · Finder)
 
 Electron에서는 **`app.getPath("userData")`** 아래에 **`DataForge-projects`** 폴더를 만들고, 프로젝트마다 **`{folderName}/`** 하위 디렉터리를 둡니다(구현: `src/electron/main/project-fs.ts`의 `getProjectsRoot()`).
 
-| 플랫폼 | `userData` 예시 (앱 이름에 따라 달라질 수 있음) | 프로젝트 루트 |
-|--------|-----------------------------------------------|----------------|
-| **macOS** | `~/Library/Application Support/proxy` — `electron-builder.yml`의 **`productName: proxy`** 기준 | `…/proxy/DataForge-projects/` |
-| **Windows** | `%APPDATA%\proxy` 근처( Electron 기본 규칙) | `…\proxy\DataForge-projects\` |
-| **Linux** | `~/.config/proxy` 근처( Electron 기본 규칙) | `…/proxy/DataForge-projects/` |
+| 플랫폼      | `userData` 예시 (앱 이름에 따라 달라질 수 있음)                                                | 프로젝트 루트                 |
+| ----------- | ---------------------------------------------------------------------------------------------- | ----------------------------- |
+| **macOS**   | `~/Library/Application Support/proxy` — `electron-builder.yml`의 **`productName: proxy`** 기준 | `…/proxy/DataForge-projects/` |
+| **Windows** | `%APPDATA%\proxy` 근처( Electron 기본 규칙)                                                    | `…\proxy\DataForge-projects\` |
+| **Linux**   | `~/.config/proxy` 근처( Electron 기본 규칙)                                                    | `…/proxy/DataForge-projects/` |
 
 - **한 프로젝트 폴더**: `{위 루트}/{folderName}/` — 내부에 **`project.json`**, **`apis/`** 등(레이아웃은 `src/libs/project-fs/layout.ts` 참고).
 - **macOS에서 Finder로 열기**: **이동 → 폴더로 이동…**(⌘⇧G)에 다음을 입력합니다.
@@ -146,14 +146,30 @@ Electron에서는 **`app.getPath("userData")`** 아래에 **`DataForge-projects`
 - `Modal` + `ModalPortal`은 `#modal` 노드(`layout.tsx`)에 포털로 렌더됩니다.
 - 프로젝트 생성 모달은 레이아웃의 `GlobalCreateProjectModal`에서 한 번만 마운트되며, 헤더·내비에서 동일하게 열립니다.
 
+### 프록시 설정 모달
+
+구현 위치:
+
+- `src/app/page.tsx`: **프록시 설정** 버튼 → 모달 오픈
+- `src/components/main/ProxyServerSettingsCard.tsx`: 모달 콘텐츠(설정 UI)
+
+변경 사항(2026-05):
+
+- **모달 너비 고정**: `Modal`에 `panelClassName` prop을 추가했고, 프록시 설정 모달은 `max-w-[600px]`로 표시합니다.
+- **닫기(X) 동작**: 모달의 기본 `showCloseBtn` 대신, 카드 헤더 내부에 닫기 버튼을 배치해 **스크롤 시 함께 이동**하도록 했습니다.
+- **모달 전용 컴포넌트로 정리**: `ProxyServerSettingsCard`의 비모달(카드) 렌더링 분기를 제거하고 **모달에서만** 사용하도록 단순화했습니다.
+- **버튼 배치**: 하단 액션 영역에 **가로채기 시작** 옆에 **게이트웨이 끄기**(게이트웨이 활성화 시) 버튼이 함께 보이도록 배치했습니다.
+- **체크박스 통일**: `input[type="checkbox"]`를 공통 `CheckBox` 컴포넌트로 교체했습니다.
+- **빠른 설정 안내 통합**: 기존 디자인을 유지하면서 상단에 “빠른 설정” 가이드를 간단한 안내 박스로 포함했습니다.
+
 ## 설정
 
 ### Tailwind CSS
 
-| 항목 | 설명 |
-|------|------|
-| **테마** | `src/styles/globals.css`의 `@theme { }` 로 컬러·타이포·간격 등 |
-| **로딩** | `src/renderer/main.tsx`에서 `globals.css`, `main.css` import |
+| 항목     | 설명                                                                         |
+| -------- | ---------------------------------------------------------------------------- |
+| **테마** | `src/styles/globals.css`의 `@theme { }` 로 컬러·타이포·간격 등               |
+| **로딩** | `src/renderer/main.tsx`에서 `globals.css`, `main.css` import                 |
 | **유틸** | `bg-background-primary`, `text-label-normal`, `rounded-3`, `typo-title-3` 등 |
 
 ### 디자인 시스템
@@ -221,14 +237,14 @@ GitHub 저장소: [https://github.com/mndangee/proxy](https://github.com/mndange
 
 아래 링크를 그대로 팀에 공유하면 됩니다. **앱을 실행한 경우** 화면 하단 푸터의 **「다운로드 · 공유」** 또는 경로 **`/downloads`**에서 동일한 안내 페이지를 열 수 있습니다.
 
-| 항목 | 링크 |
-|------|------|
-| 최신 릴리스 (배포용 DMG·Windows 설치 파일을 올릴 위치) | [GitHub Releases — Latest](https://github.com/mndangee/proxy/releases/latest) |
-| 모든 릴리스 | [Releases 목록](https://github.com/mndangee/proxy/releases) |
-| 소스 코드 ZIP (`feature/proxy` 브랜치 기준) | [ZIP 다운로드](https://github.com/mndangee/proxy/archive/refs/heads/feature/proxy.zip) |
-| 프로젝트 전체 동작 가이드 (브라우저에서 읽기) | [docs/project-full-flow-usage.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/project-full-flow-usage.md) |
-| 데이터 라이프사이클 가이드 | [docs/data-lifecycle-guide.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/data-lifecycle-guide.md) |
-| 개요·사용법 PPT (GitHub에서 Raw 저장) | [DataForge-프로젝트-개요-및-사용법.pptx](https://github.com/mndangee/proxy/blob/feature/proxy/docs/DataForge-프로젝트-개요-및-사용법.pptx) — 파일 화면에서 **⋯ → Download** |
+| 항목                                                   | 링크                                                                                                                                                                        |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 최신 릴리스 (배포용 DMG·Windows 설치 파일을 올릴 위치) | [GitHub Releases — Latest](https://github.com/mndangee/proxy/releases/latest)                                                                                               |
+| 모든 릴리스                                            | [Releases 목록](https://github.com/mndangee/proxy/releases)                                                                                                                 |
+| 소스 코드 ZIP (`feature/proxy` 브랜치 기준)            | [ZIP 다운로드](https://github.com/mndangee/proxy/archive/refs/heads/feature/proxy.zip)                                                                                      |
+| 프로젝트 전체 동작 가이드 (브라우저에서 읽기)          | [docs/project-full-flow-usage.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/project-full-flow-usage.md)                                                     |
+| 데이터 라이프사이클 가이드                             | [docs/data-lifecycle-guide.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/data-lifecycle-guide.md)                                                           |
+| 개요·사용법 PPT (GitHub에서 Raw 저장)                  | [DataForge-프로젝트-개요-및-사용법.pptx](https://github.com/mndangee/proxy/blob/feature/proxy/docs/DataForge-프로젝트-개요-및-사용법.pptx) — 파일 화면에서 **⋯ → Download** |
 
 기본 브랜치를 `main`으로 옮긴 뒤에는 위 URL의 `feature/proxy`를 `main`으로 바꾸고, 코드의 `src/libs/site-links.ts` 안 **`SITE_GITHUB_DEFAULT_BRANCH`** 값도 같이 수정하세요.
 

@@ -1,6 +1,7 @@
 /**
  * Care `Sfd.module.js` 내 `interfaces` 항목에서 tranId·desc 추출.
  * `key: { tranId: '...', desc: '...' [, 추가필드] }` 형태를 가정.
+ * (프로젝트/JSON 가져오기 시 응답 본문에서도 동일 패턴을 스캔해 API 이름·설명에 반영.)
  */
 
 export type SfdCareInterface = { key: string; tranId: string; desc: string };
@@ -18,10 +19,59 @@ function unescapeJsString(s: string): string {
   return s.replace(/\\([\s\S])/g, (_, ch: string) => ch);
 }
 
-/**
- * 소스 전체를 스캔해 interfaces 엔트리 목록 반환 (파일 내 등장 순서).
- */
-export function parseSfdModuleInterfaces(source: string): SfdCareInterface[] {
+/** 동일 tranId(정규화)는 먼저 나온 항목만 유지 */
+function mergeByTranIdFirstWins(entries: SfdCareInterface[]): SfdCareInterface[] {
+  const seen = new Set<string>();
+  const out: SfdCareInterface[] = [];
+  for (const e of entries) {
+    const n = normalizeTranIdKey(e.tranId);
+    if (!n || !e.key.trim()) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(e);
+  }
+  return out;
+}
+
+/** `{ "callName": { "tranId": "VD.x", "desc": "…" } }` 최상위 객체 */
+function parseTopLevelJsonInterfaces(source: string): SfdCareInterface[] {
+  const t = source.trim();
+  if (!t.startsWith("{")) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(t) as unknown;
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+  const rootObj = parsed as Record<string, unknown>;
+  let iter: Record<string, unknown> = rootObj;
+  if (
+    Object.keys(rootObj).length === 1 &&
+    rootObj.interfaces != null &&
+    typeof rootObj.interfaces === "object" &&
+    !Array.isArray(rootObj.interfaces)
+  ) {
+    iter = rootObj.interfaces as Record<string, unknown>;
+  }
+  const out: SfdCareInterface[] = [];
+  for (const [k, v] of Object.entries(iter)) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const o = v as Record<string, unknown>;
+    const tranIdRaw = o.tranId ?? o.tran_id;
+    if (typeof tranIdRaw !== "string") continue;
+    const tranId = tranIdRaw.trim();
+    if (!tranId) continue;
+    const key = k.trim();
+    if (!key) continue;
+    const descRaw = o.desc ?? o.description;
+    const desc = typeof descRaw === "string" ? descRaw.trim() : "";
+    out.push({ key, tranId, desc });
+  }
+  return out;
+}
+
+function parseTranFirstJsPattern(source: string): SfdCareInterface[] {
   const out: SfdCareInterface[] = [];
   const re =
     /(\b[a-zA-Z_$][\w$]*)\s*:\s*\{\s*tranId\s*:\s*(['"])((?:\\.|(?!\2).)*?)\2\s*,\s*desc\s*:\s*(['"])((?:\\.|(?!\4).)*?)\4/g;
@@ -34,6 +84,35 @@ export function parseSfdModuleInterfaces(source: string): SfdCareInterface[] {
     });
   }
   return out;
+}
+
+function parseDescFirstJsPattern(source: string): SfdCareInterface[] {
+  const out: SfdCareInterface[] = [];
+  const re =
+    /(\b[a-zA-Z_$][\w$]*)\s*:\s*\{\s*desc\s*:\s*(['"])((?:\\.|(?!\2).)*?)\2\s*,\s*tranId\s*:\s*(['"])((?:\\.|(?!\4).)*?)\4/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    out.push({
+      key: m[1],
+      tranId: unescapeJsString(m[5]),
+      desc: unescapeJsString(m[3]),
+    });
+  }
+  return out;
+}
+
+/**
+ * 소스 전체를 스캔해 interfaces 엔트리 목록 반환.
+ * - 최상위 JSON 객체(tranId/desc)
+ * - JS 리터럴 `key: { tranId, desc }` / `key: { desc, tranId }`
+ */
+export function parseSfdModuleInterfaces(source: string): SfdCareInterface[] {
+  const chunks: SfdCareInterface[] = [
+    ...parseTopLevelJsonInterfaces(source),
+    ...parseTranFirstJsPattern(source),
+    ...parseDescFirstJsPattern(source),
+  ];
+  return mergeByTranIdFirstWins(chunks);
 }
 
 /**

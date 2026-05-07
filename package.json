@@ -20,6 +20,7 @@
     "typecheck": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false'",
     "apply-care-sfd": "node scripts/apply-care-sfd-to-project.mjs",
     "free-port": "node scripts/free-port.mjs",
+    "reset:user-data": "node scripts/reset-all-user-data.mjs",
     "licenses": "node scripts/generate-licenses.js",
     "docs:data-guide-pdf": "npx --yes md-to-pdf docs/data-lifecycle-guide.md",
     "docs:project-overview-ppt": "node scripts/generate-project-overview-ppt.mjs",

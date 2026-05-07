@@ -117,13 +117,23 @@ export async function applyCareMockSpawnFromConfig(mockServerListening: boolean)
       careMockSpawnLastError = `업스트림 자동 실행: 기본 엔트리(dummy.server.js)를 찾을 수 없습니다: ${serverJs}`;
       return;
     }
+    const igClientPort =
+      ig && typeof ig.clientPort === "number" && Number.isFinite(ig.clientPort) ? Math.min(65535, Math.max(1, Math.floor(ig.clientPort))) : 7779;
+    const injectDataforgeProxy = Boolean(ig?.enabled) && igClientPort !== carePort;
     child = spawn(nodeBin, ["dummy.server.js", "-port", String(carePort)], {
       cwd: dir,
-      env: { ...process.env },
+      env: {
+        ...process.env,
+        ...(injectDataforgeProxy
+          ? { DATAFORGE_GATEWAY_ENABLED: "1", DATAFORGE_GATEWAY_PORT: String(igClientPort) }
+          : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    execDesc = `${nodeBin} dummy.server.js -port ${carePort}`;
+    execDesc = injectDataforgeProxy
+      ? `DATAFORGE_GATEWAY_ENABLED=1 DATAFORGE_GATEWAY_PORT=${igClientPort} ${nodeBin} dummy.server.js -port ${carePort}`
+      : `${nodeBin} dummy.server.js -port ${carePort}`;
   }
 
   careMockChild = child;

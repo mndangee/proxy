@@ -30,7 +30,7 @@
 1. 홈에서 `프록시 설정` 열기
 2. `모의 서버 사용` ON, 프록시 포트 입력 (예: `4780`)
 3. `요청/응답 방식` 선택
-   - 레거시 트랜 봉투(`header.tranId`) 기반이면 `legacy-tran-envelope`
+   - 트랜잭션 ID + `responseMessage` 구조(`header.tranId` 등)면 `legacy-tran-envelope`
    - 일반 REST JSON이면 `generic-json`
 4. `업스트림 자동 실행` ON (원하면 수동 실행도 가능)
    - 백엔드 작업 폴더 입력
@@ -81,7 +81,7 @@
 ## 자주 막히는 포인트
 
 - 같은 포트를 프록시/업스트림/게이트웨이에 중복 입력
-- 레거시 프로젝트인데 `generic-json` 프로필로 실행
+- `responseMessage` 구조를 쓰는 프로젝트인데 `generic-json` 프로필로 실행
 - Windows에서 shell 전용 명령(`sh -lc`) 가정한 커맨드 입력
 - 업스트림 Node 버전 불일치 (프로젝트 요구 버전과 다름)
 

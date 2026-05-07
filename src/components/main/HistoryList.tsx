@@ -48,7 +48,7 @@ function HistoryRow({ item }: { item: RecentModifiedApiItem }) {
         </div>
         <div className="typo-body-2-normal text-label-assistant truncate">{item.tran || "—"}</div>
       </div>
-      <div className="flex shrink-0 items-center gap-14">
+      <div className="flex flex-[0_0_15%] shrink-0 items-center justify-between gap-14">
         <MethodTag method={coerceHttpMethod(item.method)} />
         <div className="typo-body-2-normal text-label-assistant w-24 text-right tabular-nums">{formatProjectUpdatedLabel(item.lastActivityAt)}</div>
       </div>

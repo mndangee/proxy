@@ -133,7 +133,21 @@ function defaultAppProxyConfig(): AppProxyConfig {
     },
     mockProfile: "legacy-tran-envelope",
     mockTranAliases: {},
+    mockApiLatencyMs: {},
   };
+}
+
+const MAX_BROWSER_MOCK_API_LATENCY_MS = 300_000;
+
+function coerceBrowserMockApiLatencyMs(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ks = String(k).trim();
+    if (!ks || typeof v !== "number" || !Number.isFinite(v)) continue;
+    out[ks] = Math.max(0, Math.min(MAX_BROWSER_MOCK_API_LATENCY_MS, Math.floor(v)));
+  }
+  return out;
 }
 
 function coerceLinkedClientsLocal(raw: unknown): LinkedClientEntry[] | undefined {
@@ -234,6 +248,7 @@ function readBrowserAppProxyConfig(): AppProxyConfig {
 
     const mockTranAliases = coerceBrowserMockTranAliases(o.mockTranAliases);
     const mockProfile = coerceBrowserMockProfile(o.mockProfile);
+    const mockApiLatencyMs = coerceBrowserMockApiLatencyMs(o.mockApiLatencyMs);
 
     return {
       version: APP_PROXY_CONFIG_FILE_VERSION,
@@ -254,6 +269,7 @@ function readBrowserAppProxyConfig(): AppProxyConfig {
       interceptGateway,
       mockProfile,
       mockTranAliases,
+      mockApiLatencyMs,
     };
   } catch {
     return defaultAppProxyConfig();
@@ -524,22 +540,44 @@ type DiskApiRow = {
   updatedAt: string;
 };
 
-/** IPC·localStorage 레거시 `path` 필드를 `tran`으로 정규화 */
+function pickDiskRowString(o: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** IPC·localStorage 레거시 `path` 필드를 `tran`으로 정규화; id·method 누락·tranId·key 별칭 (readApisIndex와 동일 취지) */
 function coerceDiskApiRow(item: unknown): DiskApiRow | null {
   if (!item || typeof item !== "object") return null;
   const o = item as Record<string, unknown>;
-  if (typeof o.id !== "string" || typeof o.method !== "string") return null;
-  const fromTran = typeof o.tran === "string" ? o.tran.trim() : "";
-  const fromPath = typeof o.path === "string" ? String(o.path).trim() : "";
-  const tran = fromTran || fromPath;
+  let id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) id = newDiskApiRowId();
+
+  let methodRaw = typeof o.method === "string" ? o.method.trim().toUpperCase() : "";
+  if (!methodRaw || !BROWSER_API_HTTP_METHODS.has(methodRaw)) methodRaw = "POST";
+
+  const tran = pickDiskRowString(o, ["tran", "path", "tranId", "transactionId"]);
+  const descRaw = o.description ?? o.desc;
+  const description = typeof descRaw === "string" ? descRaw : "";
+  let name = pickDiskRowString(o, ["name", "apiName", "key", "apiKey"]);
+  if (!name) {
+    if (tran) name = tran;
+    else name = methodRaw;
+  }
+  if (!name.trim()) return null;
+
+  const createdAt = typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt.trim() : new Date().toISOString();
+  const updatedAt = typeof o.updatedAt === "string" && o.updatedAt.trim() ? o.updatedAt.trim() : createdAt;
   return {
-    id: o.id,
-    method: String(o.method).toUpperCase(),
+    id,
+    method: methodRaw,
     tran,
-    description: typeof o.description === "string" ? o.description : "",
-    name: typeof o.name === "string" ? o.name : "",
-    createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
-    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
+    description,
+    name,
+    createdAt,
+    updatedAt,
   };
 }
 
@@ -1269,8 +1307,8 @@ export async function updateProjectApiEndpoint(
 }
 
 /**
- * Care `common/core/Sfd.module.js`의 interfaces와 비교해,
- * proxy API의 **트랜(`tran`) 또는 API 이름(`name`)** 이 care `tranId`와 같으면(공백·대소문자 무시)
+ * 연동 프로젝트의 `Sfd.module.js`(interfaces)와 비교해,
+ * proxy API의 **트랜(`tran`) 또는 API 이름(`name`)** 이 모듈 `tranId`와 같으면(공백·대소문자 무시)
  * `name`을 module **키**, `description`을 **desc**로 맞춤.
  * Electron + 절대 경로가 있으면 한 번에 디스크 반영; 그 외에는 파일 내용(`sourceText`)으로 갱신.
  */
@@ -1504,6 +1542,7 @@ export async function setAppProxyConfig(
     careGateway?: Record<string, unknown>;
     mockTranAliases?: Record<string, string> | null;
     mockProfile?: MockProfileType;
+    mockApiLatencyMs?: Record<string, number> | null;
   },
 ): Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }> {
   const disk = getProjectsApi();
@@ -1627,6 +1666,17 @@ export async function setAppProxyConfig(
     mockProfile = coerceBrowserMockProfile(partial.mockProfile);
   }
 
+  let mockApiLatencyMs = coerceBrowserMockApiLatencyMs(cur.mockApiLatencyMs);
+  if (partial.mockApiLatencyMs !== undefined) {
+    mockApiLatencyMs =
+      partial.mockApiLatencyMs == null
+        ? {}
+        : {
+            ...coerceBrowserMockApiLatencyMs(cur.mockApiLatencyMs),
+            ...coerceBrowserMockApiLatencyMs(partial.mockApiLatencyMs),
+          };
+  }
+
   const next: AppProxyConfig = {
     version: APP_PROXY_CONFIG_FILE_VERSION,
     proxyServer: {
@@ -1649,6 +1699,7 @@ export async function setAppProxyConfig(
     interceptGateway,
     mockProfile,
     mockTranAliases,
+    mockApiLatencyMs,
   };
   writeBrowserAppProxyConfig(next);
   return { ok: true, config: next };
@@ -1986,11 +2037,25 @@ export function getStoredApiLatencyMs(apiName: string): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-export function setStoredApiLatencyMs(apiName: string, ms: number): void {
+export async function setStoredApiLatencyMs(apiName: string, ms: number): Promise<void> {
   const key = apiName.trim();
   if (!key) return;
+  const n = typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, Math.min(MAX_BROWSER_MOCK_API_LATENCY_MS, Math.floor(ms))) : 0;
   const map = readBrowserApiLatencyMap();
-  const n = typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, ms) : 0;
-  map[key] = n;
+  if (n === 0) delete map[key];
+  else map[key] = n;
   writeBrowserApiLatencyMap(map);
+
+  const disk = getProjectsApi();
+  if (disk && typeof disk.setAppProxyConfig === "function") {
+    try {
+      const cur = await getAppProxyConfig();
+      const merged: Record<string, number> = { ...(cur.mockApiLatencyMs ?? {}) };
+      if (n === 0) delete merged[key];
+      else merged[key] = n;
+      await disk.setAppProxyConfig({ mockApiLatencyMs: merged });
+    } catch {
+      /* keep localStorage */
+    }
+  }
 }

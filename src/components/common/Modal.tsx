@@ -16,6 +16,8 @@ export interface ICommonModalProps {
   children: React.ReactNode;
   /** 모달 사이즈 */
   size: ModalSizeType;
+  /** 패널 max-width 등 (지정 시 `size`의 max-width 대신 사용) */
+  panelClassName?: string;
   /** 우측 상단 Close 버튼 유무 */
   showCloseBtn?: boolean;
   /**
@@ -34,34 +36,33 @@ const modalSize: Record<ModalSizeType, string> = {
 const ModalContents = (props: ICommonModalProps) => {
   const overlay = props.anchorMain ? "absolute" : "fixed";
   return (
-  <div className={`${overlay} inset-0 z-[1000] flex items-center justify-center p-6`}>
-    <button
-      type="button"
-      className={`${overlay} inset-0 bg-black/70`}
-      onClick={props.onClose}
-      aria-label="닫기"
-    />
-    <div
-      role="dialog"
-      aria-modal="true"
-      className={`${modalSize[props.size]} border-border-enabled relative z-[1] w-full max-h-[86vh] overflow-y-auto rounded-4 border bg-background-white shadow-lg`}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {props.children}
-      {props.showCloseBtn && (
-        <button type="button" className="absolute top-6 right-6 cursor-pointer rounded p-1 text-label-assistant hover:bg-background-secondary-weak hover:text-label-neutral" onClick={props.onClose} aria-label="닫기">
-          <CloseIcon />
-        </button>
-      )}
+    <div className={`${overlay} inset-0 z-[1000] flex items-center justify-center p-6`}>
+      <button type="button" className={`${overlay} inset-0 bg-black/70`} onClick={props.onClose} aria-label="닫기" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`${props.panelClassName ?? modalSize[props.size]} border-border-enabled rounded-4 bg-background-white relative z-[1] max-h-[86vh] w-full overflow-y-auto border shadow-lg`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {props.children}
+        {props.showCloseBtn && (
+          <button
+            type="button"
+            className="hover:bg-background-secondary-weak absolute top-6 right-6 cursor-pointer rounded p-1 text-neutral-900 hover:text-neutral-700"
+            onClick={props.onClose}
+            aria-label="닫기"
+          >
+            <CloseIcon />
+          </button>
+        )}
+      </div>
     </div>
-  </div>
   );
 };
 
 export default function Modal(props: ICommonModalProps) {
   const isStorybook = typeof window !== "undefined" && window.self !== window.top;
-  const useMain =
-    Boolean(props.anchorMain) && typeof document !== "undefined" && document.getElementById("app-main") != null;
+  const useMain = Boolean(props.anchorMain) && typeof document !== "undefined" && document.getElementById("app-main") != null;
 
   return (
     props.isOpen &&

@@ -111,8 +111,10 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
     if (!key) return;
     const raw = latencyInput.trim().replace(/,/g, "").replace(/\s/g, "");
     if (raw === "") {
-      setStoredApiLatencyMs(key, 0);
-      setLatencyInput("0");
+      void (async () => {
+        await setStoredApiLatencyMs(key, 0);
+        setLatencyInput("0");
+      })();
       return;
     }
     const n = Number(raw);
@@ -120,8 +122,10 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
       setLatencyInput(formatLatencyInputDisplay(getStoredApiLatencyMs(key)));
       return;
     }
-    setStoredApiLatencyMs(key, n);
-    setLatencyInput(formatLatencyInputDisplay(n));
+    void (async () => {
+      await setStoredApiLatencyMs(key, n);
+      setLatencyInput(formatLatencyInputDisplay(n));
+    })();
   };
 
   return (

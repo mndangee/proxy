@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { ipcMain } from "electron";
-import type { MockProfileType } from "@/types";
+import type { AppProxyConfig, MockProfileType } from "@/types";
 
 import { applyCareMockSpawnFromConfig, getCareMockSpawnStatus, stopCareMockSpawn, type CareMockSpawnStatus } from "./care-mock-spawn";
 import { getUpstreamSpawnStatus, type UpstreamSpawnStatus } from "./upstream-spawn";
@@ -139,6 +139,38 @@ function tranIdFromGatewayBody(rawBody: string, contentType: string): string | n
 
 function mergeTranId(pathname: string, rawBody: string, contentType: string): string | null {
   return tranIdFromPath(pathname) ?? tranIdFromGatewayBody(rawBody, contentType);
+}
+
+const MAX_MOCK_LATENCY_MS = 300_000;
+
+/** API 상세에 저장한 지연(ms) — lookup 키·mockTranAliases 와 맞춤 */
+function resolveMockLatencyMs(cfg: AppProxyConfig, lookupKey: string): number {
+  const map = cfg.mockApiLatencyMs ?? {};
+  const clamp = (n: number) => Math.max(0, Math.min(MAX_MOCK_LATENCY_MS, Math.floor(n)));
+  const pick = (k: string): number | null => {
+    const v = map[k];
+    return typeof v === "number" && Number.isFinite(v) ? clamp(v) : null;
+  };
+  const direct = pick(lookupKey);
+  if (direct != null) return direct;
+  const aliases = cfg.mockTranAliases ?? {};
+  const mappedName = aliases[lookupKey];
+  if (mappedName) {
+    const p = pick(mappedName);
+    if (p != null) return p;
+  }
+  for (const [tranKey, apiName] of Object.entries(aliases)) {
+    if (apiName === lookupKey) {
+      const q = pick(tranKey);
+      if (q != null) return q;
+    }
+  }
+  return 0;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function shouldTryDirectCareMock(method: string, pathname: string): boolean {
@@ -442,6 +474,8 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
     res.end("invalid configuration json");
     return;
   }
+
+  await sleepMs(resolveMockLatencyMs(diskCfg, lookupKey));
 
   if (profile === "legacy-tran-envelope" && envelopeTranId) {
     res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", ...cors });

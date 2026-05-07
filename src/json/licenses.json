@@ -138,6 +138,12 @@
     "repository": "postcss/postcss"
   },
   {
+    "name": "pptxgenjs",
+    "version": "^4.0.1",
+    "license": "MIT",
+    "repository": "git+https://github.com/gitbrent/PptxGenJS.git"
+  },
+  {
     "name": "prettier",
     "version": "^3.7.4",
     "license": "MIT",

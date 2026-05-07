@@ -150,6 +150,9 @@ function forwardToUpstream(
 ): void {
   const headers = { ...clientReq.headers } as Record<string, string | string[] | undefined>;
   headers.host = `127.0.0.1:${upstreamPort}`;
+  // 업스트림이 dummy.server.js(7777)이고, 거기서 다시 DataForge(게이트웨이)로 프록시하도록 패치된 경우
+  // 무한 루프를 막기 위해 "업스트림에서는 프록시하지 말라"는 힌트를 준다.
+  headers["x-dataforge-bypass"] = "1";
 
   const p = httpRequest(
     {

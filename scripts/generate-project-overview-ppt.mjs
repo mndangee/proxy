@@ -98,7 +98,7 @@ bullets(pres, "역할 정리", [
 ]);
 
 bullets(pres, "요청/응답 방식(프로토콜 프로필)", [
-  "레거시 트랜 봉투: header.tranId 등으로 조회, responseMessage 형태로 응답",
+  "트랜잭션 ID + responseMessage: header.tranId 등으로 조회, responseMessage 구조로 응답",
   "일반 JSON API(REST): 경로·헤더·쿼리·본문 기반 키로 조회, JSON 그대로 응답",
   "프로젝트 성격에 맞는 프로필을 선택해야 합니다.",
 ]);

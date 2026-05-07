@@ -8,7 +8,13 @@ import AdmZip from "adm-zip";
 import { app, dialog, ipcMain } from "electron";
 
 import type { AppProxyConfig, AppProxyInterceptGatewayConfig, LinkedClientEntry, MockProfileType } from "@/types";
-import { buildCareTranLookup, findCareForProxyApi, parseSfdModuleInterfaces } from "@/libs/care/sfdModuleInterfaces";
+import {
+  buildCareTranLookup,
+  findCareForProxyApi,
+  normalizeTranIdKey,
+  parseSfdModuleInterfaces,
+  type SfdCareInterface,
+} from "@/libs/care/sfdModuleInterfaces";
 
 export const PROJECT_MANIFEST_VERSION = 1;
 
@@ -31,6 +37,19 @@ export function coerceMockTranAliases(raw: unknown): Record<string, string> {
     const ks = String(k).trim();
     const vs = typeof v === "string" ? v.trim() : "";
     if (ks && vs) out[ks] = vs;
+  }
+  return out;
+}
+
+const MAX_MOCK_API_LATENCY_MS = 300_000;
+
+export function coerceMockApiLatencyMs(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ks = String(k).trim();
+    if (!ks || typeof v !== "number" || !Number.isFinite(v)) continue;
+    out[ks] = Math.max(0, Math.min(MAX_MOCK_API_LATENCY_MS, Math.floor(v)));
   }
   return out;
 }
@@ -352,6 +371,7 @@ function defaultAppProxyConfig(): AppProxyConfig {
     interceptGateway: defaultInterceptGateway(),
     mockProfile: "legacy-tran-envelope",
     mockTranAliases: {},
+    mockApiLatencyMs: {},
   };
 }
 
@@ -434,6 +454,7 @@ export async function readAppProxyConfigDisk(): Promise<AppProxyConfig> {
 
     const mockTranAliases = coerceMockTranAliases(o.mockTranAliases);
     const mockProfile = coerceMockProfile(o.mockProfile);
+    const mockApiLatencyMs = coerceMockApiLatencyMs(o.mockApiLatencyMs);
 
     return {
       version: o.version === APP_PROXY_CONFIG_VERSION_LEGACY ? APP_PROXY_CONFIG_VERSION : Math.floor(Number(o.version)),
@@ -454,6 +475,7 @@ export async function readAppProxyConfigDisk(): Promise<AppProxyConfig> {
       interceptGateway,
       mockProfile,
       mockTranAliases,
+      mockApiLatencyMs,
     };
   } catch {
     return defaultAppProxyConfig();
@@ -586,6 +608,11 @@ async function mergeAppProxyConfigDisk(partial: unknown): Promise<AppProxyConfig
     mockTranAliases = coerceMockTranAliases(o.mockTranAliases);
   }
 
+  let mockApiLatencyMs = coerceMockApiLatencyMs(cur.mockApiLatencyMs);
+  if ("mockApiLatencyMs" in o) {
+    mockApiLatencyMs = { ...mockApiLatencyMs, ...coerceMockApiLatencyMs(o.mockApiLatencyMs) };
+  }
+
   const next: AppProxyConfig = {
     version: APP_PROXY_CONFIG_VERSION,
     proxyServer: {
@@ -605,6 +632,7 @@ async function mergeAppProxyConfigDisk(partial: unknown): Promise<AppProxyConfig
     interceptGateway,
     mockProfile,
     mockTranAliases,
+    mockApiLatencyMs,
   };
   await fs.writeFile(getAppProxyConfigPath(), JSON.stringify(next, null, 2), "utf-8");
   return next;
@@ -637,6 +665,62 @@ export interface StoredApiEntry {
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
+function coerceStoredApiMethod(raw: unknown): string {
+  const s = String(raw ?? "")
+    .trim()
+    .toUpperCase();
+  return HTTP_METHODS.has(s) ? s : "POST";
+}
+
+function pickFirstNonEmptyString(o: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/** 가져온/외부 `apis/index.json` 호환 — id·method 누락·tranId·key 등 별칭 */
+function normalizeApisIndexItem(item: unknown): StoredApiEntry | null {
+  if (!item || typeof item !== "object") return null;
+  const o = item as Record<string, unknown>;
+  const id = typeof o.id === "string" && o.id.trim() ? o.id.trim() : randomUUID();
+  const method = coerceStoredApiMethod(o.method);
+  const tran = pickFirstNonEmptyString(o, ["tran", "path", "tranId", "transactionId"]);
+  const descRaw = o.description ?? o.desc;
+  const description = typeof descRaw === "string" ? descRaw : "";
+  let name = pickFirstNonEmptyString(o, ["name", "apiName", "key", "apiKey"]);
+  if (!name) {
+    if (tran) name = tran;
+    else name = method;
+  }
+  if (!name.trim()) return null;
+  if (!isSafeProjectFolderName(name)) return null;
+
+  const createdAt =
+    typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt.trim() : new Date().toISOString();
+  const updatedAt =
+    typeof o.updatedAt === "string" && o.updatedAt.trim() ? o.updatedAt.trim() : createdAt;
+  return { id, method, tran, description, name, createdAt, updatedAt };
+}
+
+async function pathMtimeMs(fp: string): Promise<number> {
+  try {
+    return (await fs.stat(fp)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+async function maxPathMtimeIso(paths: string[], fallbackIso: string): Promise<string> {
+  let max = 0;
+  for (const p of paths) {
+    const ms = await pathMtimeMs(p);
+    if (ms > max) max = ms;
+  }
+  return max > 0 ? new Date(max).toISOString() : fallbackIso;
+}
+
 export async function readApisIndex(projectRoot: string): Promise<StoredApiEntry[]> {
   const fp = join(projectRoot, "apis", "index.json");
   try {
@@ -645,23 +729,8 @@ export async function readApisIndex(projectRoot: string): Promise<StoredApiEntry
     if (!Array.isArray(parsed)) return [];
     const out: StoredApiEntry[] = [];
     for (const item of parsed) {
-      if (!item || typeof item !== "object") continue;
-      const o = item as Record<string, unknown>;
-      if (typeof o.id !== "string" || typeof o.method !== "string") continue;
-      const fromTran = typeof o.tran === "string" ? o.tran.trim() : "";
-      const fromPath = typeof o.path === "string" ? String(o.path).trim() : "";
-      /** 빈 `tran`만 있고 레거시 `path`에 값이 있는 JSON 호환 */
-      const tranTrim = fromTran || fromPath;
-      const methodUp = String(o.method).toUpperCase();
-      out.push({
-        id: o.id,
-        method: methodUp,
-        tran: tranTrim,
-        description: typeof o.description === "string" ? o.description : "",
-        name: typeof o.name === "string" ? o.name : tranTrim ? `${methodUp} ${tranTrim}` : methodUp,
-        createdAt: typeof o.createdAt === "string" ? o.createdAt : new Date().toISOString(),
-        updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
-      });
+      const row = normalizeApisIndexItem(item);
+      if (row) out.push(row);
     }
     return out;
   } catch {
@@ -780,6 +849,228 @@ function jsonFileToConfiguration(raw: string): string {
   }
 }
 
+const MAX_INTERFACE_SCAN_FILES_PER_DIR = 120;
+
+/**
+ * startDir(프로젝트/JSON가 있는 폴더)에서 시작해 상위로 올라가는 체인.
+ * 스캔 순서는 **가까운 디렉터리 먼저**(프로젝트 루트의 Sfd·interfaces 파일 우선) — reverse 하지 않음.
+ */
+function ancestorDirsScanOrderForInterfaces(startDir: string, maxUp: number): string[] {
+  const chain: string[] = [];
+  let d = startDir.trim();
+  if (!d) return [];
+  for (let i = 0; i < maxUp; i++) {
+    chain.push(d);
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return chain;
+}
+
+/**
+ * Care 레포: 더미 JSON은 `server/dummy`에만 있고 `Sfd.module.js`는 형제 `common/core`에 있음.
+ * 상위 디렉터리 체인만 쓰면 `common/core`가 빠지므로, 각 조상 `d`에 대해 `d/common/core`가 있으면 바로 다음에 스캔한다.
+ */
+async function expandAncestorChainWithCareCommonCore(chain: string[]): Promise<string[]> {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chain) {
+    const d = raw.trim();
+    if (!d) continue;
+    if (!seen.has(d)) {
+      seen.add(d);
+      out.push(d);
+    }
+    const core = join(d, "common", "core");
+    try {
+      const st = await fs.stat(core);
+      if (st.isDirectory() && !seen.has(core)) {
+        seen.add(core);
+        out.push(core);
+      }
+    } catch {
+      /* no common/core */
+    }
+  }
+  return out;
+}
+
+function inferInterfaceSourceScore(fileName: string, source: string): number {
+  const low = fileName.toLowerCase();
+  let score = 0;
+  // 파일명 하드코딩 없이도 의미 있는 힌트만 가산.
+  if (low.includes("interface")) score += 70;
+  if (low.includes("module")) score += 20;
+  if (low.includes("sfd")) score += 20;
+  if (/\binterfaces\s*:\s*\{/.test(source)) score += 140;
+  if (/\btranId\s*:/.test(source)) score += 40;
+  if (/\bdesc\s*:/.test(source)) score += 20;
+  return score;
+}
+
+/** 가져오기 루트·상위 폴더의 js/json/ts에서 interfaces 패턴 수집 (tranId 중복은 더 신뢰도 높은 소스 우선) */
+async function collectSfdInterfaceEntriesFromDirs(dirs: string[]): Promise<SfdCareInterface[]> {
+  const uniq = [...new Set(dirs.filter(Boolean))];
+  const pickedByTran = new Map<string, { entry: SfdCareInterface; score: number; order: number }>();
+  let order = 0;
+
+  for (const dir of uniq) {
+    if (basename(dir) === "node_modules") continue;
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const files = entries
+      .filter((e) => e.isFile() && /\.(js|mjs|cjs|ts|json)$/i.test(e.name))
+      .map((e) => e.name)
+      .filter((n) => {
+        const low = n.toLowerCase();
+        return low !== "project.json" && low !== "package-lock.json" && low !== "package.json";
+      })
+      .sort((a, b) => a.localeCompare(b))
+      .slice(0, MAX_INTERFACE_SCAN_FILES_PER_DIR);
+
+    for (const name of files) {
+      let text: string;
+      try {
+        text = await fs.readFile(join(dir, name), "utf-8");
+      } catch {
+        continue;
+      }
+
+      const parsed = parseSfdModuleInterfaces(text);
+      if (parsed.length === 0) continue;
+      const sourceScore = inferInterfaceSourceScore(name, text);
+
+      for (const e of parsed) {
+        const n = normalizeTranIdKey(e.tranId);
+        if (!n) continue;
+        const prev = pickedByTran.get(n);
+        const nextOrder = order++;
+        if (!prev || sourceScore > prev.score || (sourceScore === prev.score && nextOrder < prev.order)) {
+          pickedByTran.set(n, { entry: e, score: sourceScore, order: nextOrder });
+        }
+      }
+    }
+  }
+
+  return [...pickedByTran.values()]
+    .sort((a, b) => a.order - b.order)
+    .map((x) => x.entry);
+}
+
+function pickInterfaceForFileStem(entries: SfdCareInterface[], fallbackApiKey: string): SfdCareInterface | undefined {
+  if (entries.length === 0) return undefined;
+  const fn = normalizeTranIdKey(fallbackApiKey);
+  if (fn) {
+    const hit = entries.find((e) => normalizeTranIdKey(e.tranId) === fn);
+    if (hit) return hit;
+  }
+  return entries[0];
+}
+
+/**
+ * 1) 본문에 interfaces 패턴
+ * 2) careLookup: 상위 폴더 등에서 모은 tranId → { key, desc } (파일명 stem이 tranId일 때)
+ * 3) 파일명 stem + 기본 설명
+ */
+function inferImportedJsonApiMeta(
+  raw: string,
+  fallbackApiKey: string,
+  fallbackDescription: string,
+  careLookup?: Map<string, SfdCareInterface> | null,
+): { apiKey: string; tran: string; description: string } {
+  const fromBody = parseSfdModuleInterfaces(raw);
+  const bodyPick = pickInterfaceForFileStem(fromBody, fallbackApiKey);
+  if (bodyPick) {
+    const name = bodyPick.key.trim();
+    const tran = bodyPick.tranId.trim() || fallbackApiKey.trim();
+    const desc = bodyPick.desc.trim() || fallbackDescription;
+    if (name && isSafeProjectFolderName(name)) {
+      return { apiKey: name, tran, description: desc };
+    }
+  }
+  if (careLookup && careLookup.size > 0) {
+    const care = findCareForProxyApi(careLookup, { tran: fallbackApiKey, name: fallbackApiKey });
+    if (care) {
+      const name = care.key.trim();
+      const tran = care.tranId.trim() || fallbackApiKey.trim();
+      const desc = care.desc.trim() || fallbackDescription;
+      if (name && isSafeProjectFolderName(name)) {
+        return { apiKey: name, tran, description: desc };
+      }
+    }
+  }
+  const fb = fallbackApiKey.trim();
+  return {
+    apiKey: fb,
+    tran: fb,
+    description: fallbackDescription,
+  };
+}
+
+/**
+ * 이미 복사된 프로젝트 루트 기준: 루트·상위 폴더의 js/json/ts 에서 interfaces 를 읽어
+ * apis/index 의 name·tran·description 및 responses-store 키를 맞춤 (가져오기 직후 보강).
+ */
+async function enrichProjectApisFromNearbyInterfaceFiles(projectRoot: string): Promise<void> {
+  const manifest = await readManifest(projectRoot);
+  if (!manifest) return;
+
+  const dirs = await expandAncestorChainWithCareCommonCore(ancestorDirsScanOrderForInterfaces(projectRoot, 6));
+  const careLookup = buildCareTranLookup(await collectSfdInterfaceEntriesFromDirs(dirs));
+  if (careLookup.size === 0) return;
+
+  const items = await readApisIndex(projectRoot);
+  if (items.length === 0) return;
+
+  const store = await readApiResponsesStore(projectRoot);
+  const nest = { ...store.byApiName };
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  for (let i = 0; i < items.length; i++) {
+    const row = items[i]!;
+    const care = findCareForProxyApi(careLookup, row);
+    if (!care) continue;
+
+    const newName = care.key.trim();
+    const newDesc = care.desc.trim() || row.description.trim();
+    const newTran = care.tranId.trim() || row.tran.trim();
+    const oldName = row.name.trim();
+
+    if (row.name.trim() === newName && row.description.trim() === newDesc && row.tran.trim() === newTran) continue;
+
+    if (items.some((x, j) => j !== i && x.name.trim() === newName)) continue;
+
+    if (oldName !== newName && Object.prototype.hasOwnProperty.call(nest, oldName)) {
+      const moved = nest[oldName];
+      if (moved != null && moved.length > 0) {
+        nest[newName] = [...moved, ...(nest[newName] ?? [])];
+      }
+      delete nest[oldName];
+    }
+
+    items[i] = {
+      ...row,
+      name: newName,
+      tran: newTran,
+      description: newDesc,
+      updatedAt: now,
+    };
+    updated += 1;
+  }
+
+  if (updated > 0) {
+    await writeApisIndex(projectRoot, items);
+    await writeApiResponsesStore(projectRoot, nest);
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify({ ...manifest, updatedAt: now }, null, 2), "utf-8");
+  }
+}
+
 function uniqueResponseLabelForImport(list: ApiResponseRowDisk[], base: string): string {
   const want = base.trim() || "응답";
   if (!list.some((r) => r.label === want)) return want;
@@ -796,6 +1087,18 @@ async function importApisFromJsonPaths(
   const errors: string[] = [];
   const touchedApiNames: string[] = [];
   let imported = 0;
+  const careLookupMemo = new Map<string, Map<string, SfdCareInterface>>();
+
+  async function careLookupNearJsonFile(jsonPath: string): Promise<Map<string, SfdCareInterface>> {
+    const dirs = await expandAncestorChainWithCareCommonCore(ancestorDirsScanOrderForInterfaces(dirname(jsonPath), 5));
+    const key = dirs.join("\0");
+    const hit = careLookupMemo.get(key);
+    if (hit) return hit;
+    const entries = await collectSfdInterfaceEntriesFromDirs(dirs);
+    const lookup = buildCareTranLookup(entries);
+    careLookupMemo.set(key, lookup);
+    return lookup;
+  }
 
   for (const fp of filePaths) {
     const fileLabel = basename(fp);
@@ -803,12 +1106,12 @@ async function importApisFromJsonPaths(
       errors.push(`${fileLabel}: JSON 파일이 아닙니다.`);
       continue;
     }
-    const apiKey = fileLabel.replace(/\.json$/i, "").trim();
-    if (!apiKey || !isSafeProjectFolderName(apiKey)) {
+    const stemFromFile = fileLabel.replace(/\.json$/i, "").trim();
+    if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) {
       errors.push(`${fileLabel}: API 이름으로 사용할 수 없습니다.`);
       continue;
     }
-    if (apiKey.toLowerCase() === "project") {
+    if (stemFromFile.toLowerCase() === "project") {
       errors.push(`${fileLabel}: 이 파일명은 사용할 수 없습니다.`);
       continue;
     }
@@ -820,6 +1123,19 @@ async function importApisFromJsonPaths(
       errors.push(`${fileLabel}: 파일을 읽지 못했습니다.`);
       continue;
     }
+
+    const careLookup = await careLookupNearJsonFile(fp);
+    const meta = inferImportedJsonApiMeta(raw, stemFromFile, `JSON 가져오기: ${fileLabel}`, careLookup);
+    const apiKey = meta.apiKey;
+    if (!apiKey || !isSafeProjectFolderName(apiKey)) {
+      errors.push(`${fileLabel}: API 이름으로 사용할 수 없습니다.`);
+      continue;
+    }
+    if (apiKey.toLowerCase() === "project") {
+      errors.push(`${fileLabel}: 이 파일명은 사용할 수 없습니다.`);
+      continue;
+    }
+
     const configuration = jsonFileToConfiguration(raw);
 
     const items = await readApisIndex(projectRoot);
@@ -832,16 +1148,16 @@ async function importApisFromJsonPaths(
     const existing = items.find((x) => x.name.trim() === apiKey);
 
     if (!existing) {
-      if (items.some((x) => x.method === "POST" && x.tran.trim() === apiKey)) {
-        errors.push(`${fileLabel}: 같은 트랜 이름의 API가 이미 있습니다.`);
+      if (items.some((x) => x.method === "POST" && x.tran.trim() === meta.tran.trim())) {
+        errors.push(`${fileLabel}: 같은 트랜(${meta.tran})의 API가 이미 있습니다.`);
         continue;
       }
       const now = new Date().toISOString();
       const entry: StoredApiEntry = {
         id: randomUUID(),
         method: "POST",
-        tran: apiKey,
-        description: `JSON 가져오기: ${fileLabel}`,
+        tran: meta.tran,
+        description: meta.description,
         name: apiKey,
         createdAt: now,
         updatedAt: now,
@@ -927,21 +1243,39 @@ async function importLooseJsonFolderAsProject(
   const byApiName: Record<string, ApiResponseRowDisk[]> = {};
   const usedApiKeys = new Set<string>();
 
+  const interfaceScanDirs = await expandAncestorChainWithCareCommonCore(ancestorDirsScanOrderForInterfaces(sourceDir, 5));
+  const globalCareLookup = buildCareTranLookup(await collectSfdInterfaceEntriesFromDirs(interfaceScanDirs));
+
   for (const { folderName: subFolder, fileNames } of nestedPlan) {
-    const apiKey = subFolder.trim();
-    if (!apiKey || !isSafeProjectFolderName(apiKey)) continue;
+    const folderStem = subFolder.trim();
+    if (!folderStem || !isSafeProjectFolderName(folderStem)) continue;
 
     const responses: ApiResponseRowDisk[] = [];
-    for (const fileName of fileNames) {
+    const sourcePaths: string[] = [];
+    let folderMeta: { apiKey: string; tran: string; description: string } | null = null;
+    const sortedNames = [...fileNames].sort((a, b) => a.localeCompare(b));
+    for (const fileName of sortedNames) {
+      const abs = join(sourceDir, subFolder, fileName);
       let raw: string;
       try {
-        raw = await fs.readFile(join(sourceDir, subFolder, fileName), "utf-8");
+        raw = await fs.readFile(abs, "utf-8");
       } catch {
         continue;
+      }
+      sourcePaths.push(abs);
+      if (folderMeta == null) {
+        folderMeta = inferImportedJsonApiMeta(
+          raw,
+          folderStem,
+          `가져온 폴더 · 응답 ${sortedNames.length}개`,
+          globalCareLookup,
+        );
       }
       const configuration = jsonFileToConfiguration(raw);
       const val = `saved-${randomUUID()}`;
       const labelStem = fileName.replace(/\.json$/i, "").trim() || "default";
+      const fileMs = await pathMtimeMs(abs);
+      const fileMtimeIso = fileMs > 0 ? new Date(fileMs).toISOString() : now;
       responses.push({
         id: val,
         value: val,
@@ -949,47 +1283,60 @@ async function importLooseJsonFolderAsProject(
         description: `파일: ${fileName}`,
         editorType: "default",
         configuration,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: fileMtimeIso,
+        updatedAt: fileMtimeIso,
       });
     }
 
     if (responses.length === 0) continue;
 
+    const meta =
+      folderMeta ??
+      inferImportedJsonApiMeta("", folderStem, `가져온 폴더 · 응답 ${responses.length}개`, globalCareLookup);
+    const apiKey = meta.apiKey;
+    if (!apiKey || usedApiKeys.has(apiKey)) continue;
+
     usedApiKeys.add(apiKey);
+    const apiUpdatedIso = await maxPathMtimeIso(sourcePaths, now);
     items.push({
       id: randomUUID(),
       method: "POST",
-      tran: apiKey,
-      description: `가져온 폴더 · 응답 ${responses.length}개`,
+      tran: meta.tran,
+      description: meta.description,
       name: apiKey,
       createdAt: now,
-      updatedAt: now,
+      updatedAt: apiUpdatedIso,
     });
     byApiName[apiKey] = responses;
   }
 
   for (const fileName of rootJsonNames) {
-    const apiKey = fileName.replace(/\.json$/i, "").trim();
-    if (!apiKey || !isSafeProjectFolderName(apiKey)) continue;
-    if (usedApiKeys.has(apiKey)) continue;
+    const stemFromFile = fileName.replace(/\.json$/i, "").trim();
+    if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) continue;
 
+    const absRoot = join(sourceDir, fileName);
     let raw: string;
     try {
-      raw = await fs.readFile(join(sourceDir, fileName), "utf-8");
+      raw = await fs.readFile(absRoot, "utf-8");
     } catch {
       continue;
     }
 
+    const meta = inferImportedJsonApiMeta(raw, stemFromFile, `가져온 파일: ${fileName}`, globalCareLookup);
+    const apiKey = meta.apiKey;
+    if (!apiKey || usedApiKeys.has(apiKey)) continue;
+
+    const rootMs = await pathMtimeMs(absRoot);
+    const rootMtimeIso = rootMs > 0 ? new Date(rootMs).toISOString() : now;
     const configuration = jsonFileToConfiguration(raw);
     const entry: StoredApiEntry = {
       id: randomUUID(),
       method: "POST",
-      tran: apiKey,
-      description: `가져온 파일: ${fileName}`,
+      tran: meta.tran,
+      description: meta.description,
       name: apiKey,
       createdAt: now,
-      updatedAt: now,
+      updatedAt: rootMtimeIso,
     };
     items.push(entry);
     usedApiKeys.add(apiKey);
@@ -1003,8 +1350,8 @@ async function importLooseJsonFolderAsProject(
         description: "",
         editorType: "default",
         configuration,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: rootMtimeIso,
+        updatedAt: rootMtimeIso,
       },
     ];
   }
@@ -1030,6 +1377,7 @@ async function importLooseJsonFolderAsProject(
   await fs.writeFile(join(dest, "project.json"), JSON.stringify(manifest, null, 2), "utf-8");
   await writeApisIndex(dest, items);
   await writeApiResponsesStore(dest, byApiName);
+  await enrichProjectApisFromNearbyInterfaceFiles(dest);
 
   return { ok: true, project: manifest };
 }
@@ -1350,6 +1698,7 @@ export function registerProjectFsIpc(): void {
       updatedAt: now,
     };
     await fs.writeFile(join(dest, "project.json"), JSON.stringify(imported, null, 2), "utf-8");
+    await enrichProjectApisFromNearbyInterfaceFiles(dest);
 
     if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
 
