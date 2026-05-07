@@ -1,15 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 
 import CloseIcon from "@/assets/svg/CloseIcon";
 import Btn from "@/components/common/Btn";
 import CheckBox from "@/components/common/CheckBox";
 import Input from "@/components/common/Input";
-import { getAppProxyConfig, getMockProxyStatus, hasProjectDiskApi, setAppProxyConfig, type MockProxyStatus } from "@/libs/projects/store";
+import { getAppProxyConfig, hasProjectDiskApi, setAppProxyConfig } from "@/libs/projects/store";
 import type { AppProxyConfig } from "@/types";
 
-const STATUS_POLL_MS = 2000;
 const MODAL_ACTION_BTN_CLASS = "!w-auto min-w-[168px] shrink-0";
 const MODAL_SAVE_BTN_CLASS = "!w-auto min-w-[88px] shrink-0";
 
@@ -21,7 +20,6 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
   const [diskApi] = useState(() => hasProjectDiskApi());
   const [config, setConfig] = useState<AppProxyConfig | null>(null);
   const [portDraft, setPortDraft] = useState("");
-  const [status, setStatus] = useState<MockProxyStatus | null>(null);
   const [clientPortDraft, setClientPortDraft] = useState("7779");
   const [upstreamPortDraft, setUpstreamPortDraft] = useState("7778");
   const [gatewayError, setGatewayError] = useState("");
@@ -36,24 +34,9 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
     setPortDraft(String(c.proxyServer.port));
   }, []);
 
-  const bumpStatus = useCallback(async () => {
-    if (!diskApi) {
-      setStatus(null);
-      return;
-    }
-    setStatus(await getMockProxyStatus());
-  }, [diskApi]);
-
   useEffect(() => {
     void reloadConfig();
   }, [reloadConfig]);
-
-  useEffect(() => {
-    void bumpStatus();
-    if (!diskApi) return;
-    const id = window.setInterval(() => void bumpStatus(), STATUS_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [diskApi, bumpStatus]);
 
   useEffect(() => {
     if (config) {
@@ -65,62 +48,12 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
     }
   }, [config]);
 
-  const statusOverview = useMemo(() => {
-    if (!diskApi || !config) {
-      return {
-        tone: "muted" as const,
-        headline: "Electron 앱에서 연결 상태를 확인하세요",
-        hint: "브라우저만으로는 로컬 서버가 동작하지 않습니다.",
-      };
-    }
-    const mockListen = status?.listening;
-    const mockErr = status?.lastError;
-    const mockPort = status?.port ?? config.proxyServer.port;
-    const gwOn = Boolean(config.interceptGateway?.enabled);
-    const gwListen = status?.interceptGateway?.listening;
-    const gwErr = status?.interceptGateway?.lastError;
-    const gwPort = status?.interceptGateway?.port ?? config.interceptGateway?.clientPort;
-
-    if (mockErr) {
-      return { tone: "error" as const, headline: "모의 서버 오류", hint: mockErr };
-    }
-    if (gwOn && gwErr) {
-      return { tone: "error" as const, headline: "게이트웨이 오류", hint: gwErr };
-    }
-    if (mockListen && gwOn && gwListen) {
-      return {
-        tone: "ready" as const,
-        headline: "네트워크 게이트웨이 준비 완료",
-        hint: `모의 서버 localhost:${mockPort} · 게이트웨이 localhost:${gwPort ?? "—"}`,
-      };
-    }
-    if (mockListen && !gwOn) {
-      return {
-        tone: "ready" as const,
-        headline: "모의 서버 실행 중",
-        hint: "가로채기 시작을 누르면 API 가로채기(게이트웨이)를 켤 수 있습니다.",
-      };
-    }
-    if (mockListen && gwOn && !gwListen && !gwErr) {
-      return { tone: "warn" as const, headline: "게이트웨이 기동 중…", hint: "잠시 후 다시 확인해 주세요." };
-    }
-    if (config.proxyServer.enabled && !mockListen) {
-      return { tone: "warn" as const, headline: "모의 서버 기동 중…", hint: "포트 충돌이 없는지 확인해 주세요." };
-    }
-    return {
-      tone: "muted" as const,
-      headline: "프록시 대기 중",
-      hint: "가로채기 시작으로 모의 서버와 게이트웨이를 켤 수 있습니다.",
-    };
-  }, [diskApi, config, status]);
-
   const onDisableGateway = async () => {
     setSaveBusy(true);
     try {
       const r = await setAppProxyConfig({ interceptGateway: { enabled: false, autoStartUpstream: false } });
       if (r.ok) {
         setConfig(r.config);
-        await bumpStatus();
       }
     } finally {
       setSaveBusy(false);
@@ -178,7 +111,6 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         setPortDraft(String(r.config.proxyServer.port));
         setClientPortDraft(String(r.config.interceptGateway?.clientPort ?? clientPort));
         setUpstreamPortDraft(String(r.config.interceptGateway?.upstreamPort ?? upstreamPort));
-        await bumpStatus();
       } else {
         setGatewayError("자동 가로채기 설정 저장에 실패했습니다.");
       }
@@ -206,7 +138,6 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         setConfig(r.config);
         setUpstreamAutoStartDraft(Boolean(r.config.proxyServer.upstreamAutoStart));
         setUpstreamWorkdirDraft(r.config.proxyServer.upstreamServerWorkdir ?? "");
-        await bumpStatus();
       } else {
         setUpstreamSaveError("업스트림 자동 실행 저장에 실패했습니다.");
       }
@@ -221,17 +152,6 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
     setUpstreamAutoStartDraft(Boolean(next.upstreamAutoStart));
     if (upstreamSaveError) setUpstreamSaveError("");
   };
-
-  const overviewAccent =
-    statusOverview.tone === "ready"
-      ? "border-emerald-200/80 from-emerald-50/90 to-background-white"
-      : statusOverview.tone === "warn"
-        ? "border-amber-200/80 from-amber-50/80 to-background-white"
-        : statusOverview.tone === "error"
-          ? "border-red-200/80 from-red-50/80 to-background-white"
-          : "border-gray-200 from-gray-50/90 to-background-white";
-
-  const modalSectionClass = "rounded-4 border border-gray-200 bg-background-white px-6 py-4 shadow-sm";
   const modalSectionTitleClass = "typo-body-1-normal text-label-normal font-semibold";
 
   if (config == null) {

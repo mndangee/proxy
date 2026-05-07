@@ -404,6 +404,7 @@ interface ProjectsDiskApi {
     careGateway?: Record<string, unknown>;
     mockTranAliases?: Record<string, string> | null;
     mockProfile?: MockProfileType;
+    mockApiLatencyMs?: Record<string, number> | null;
   }) => Promise<unknown>;
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<unknown>;
   getMockProxyStatus: () => Promise<unknown>;
