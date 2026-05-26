@@ -204,4 +204,62 @@
     width: 0;
     height: 0;
   }
+
+  /* 프록시 설정 — STATUS pill (컴팩트 캡션 + 상태별 연한 배경) */
+  .proxy-status-pill {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    border-radius: 9999px;
+    border: 1px solid;
+    padding: 4px 12px 4px 22px;
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+
+  .proxy-status-pill::before {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    transform: translateY(-50%);
+    content: "";
+  }
+
+  .proxy-status-pill--idle {
+    border-color: #d4d4d4;
+    background-color: #fafafa;
+    color: #222222;
+  }
+
+  .proxy-status-pill--idle::before {
+    background-color: #000000;
+  }
+
+  .proxy-status-pill--running {
+    border-color: #86efac;
+    background-color: #ecfdf5;
+    color: #166534;
+  }
+
+  .proxy-status-pill--running::before {
+    background-color: #22c55e;
+  }
+
+  .proxy-status-pill--error {
+    border-color: #fecaca;
+    background-color: #fef2f2;
+    color: #b91c1c;
+  }
+
+  .proxy-status-pill--error::before {
+    background-color: #ef4444;
+  }
 }

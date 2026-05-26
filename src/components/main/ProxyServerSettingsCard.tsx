@@ -6,7 +6,7 @@ import CloseIcon from "@/assets/svg/CloseIcon";
 import Btn from "@/components/common/Btn";
 import CheckBox from "@/components/common/CheckBox";
 import Input from "@/components/common/Input";
-import { getAppProxyConfig, hasProjectDiskApi, setAppProxyConfig } from "@/libs/projects/store";
+import { getAppProxyConfig, getMockProxyStatus, hasProjectDiskApi, setAppProxyConfig, type MockProxyStatus } from "@/libs/projects/store";
 import type { AppProxyConfig } from "@/types";
 
 const MODAL_ACTION_BTN_CLASS = "!w-auto min-w-[168px] shrink-0";
@@ -27,6 +27,7 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
   const [upstreamWorkdirDraft, setUpstreamWorkdirDraft] = useState("");
   const [upstreamSaveError, setUpstreamSaveError] = useState("");
   const [saveBusy, setSaveBusy] = useState(false);
+  const [runtimeStatus, setRuntimeStatus] = useState<MockProxyStatus | null>(null);
 
   const reloadConfig = useCallback(async () => {
     const c = await getAppProxyConfig();
@@ -37,6 +38,21 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
   useEffect(() => {
     void reloadConfig();
   }, [reloadConfig]);
+
+  const reloadRuntimeStatus = useCallback(async () => {
+    if (!diskApi) return;
+    const s = await getMockProxyStatus();
+    setRuntimeStatus(s);
+  }, [diskApi]);
+
+  useEffect(() => {
+    if (!diskApi) return;
+    void reloadRuntimeStatus();
+    const timer = window.setInterval(() => {
+      void reloadRuntimeStatus();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [diskApi, reloadRuntimeStatus]);
 
   useEffect(() => {
     if (config) {
@@ -54,6 +70,7 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
       const r = await setAppProxyConfig({ interceptGateway: { enabled: false, autoStartUpstream: false } });
       if (r.ok) {
         setConfig(r.config);
+        void reloadRuntimeStatus();
       }
     } finally {
       setSaveBusy(false);
@@ -93,17 +110,21 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
 
     setSaveBusy(true);
     try {
+      const workdirForGateway = upstreamWorkdirDraft.trim() || config?.proxyServer.upstreamServerWorkdir?.trim() || config?.proxyServer.careDummyServerWorkdir?.trim() || null;
       const r = await setAppProxyConfig({
         proxyServer: {
           enabled: true,
           port: mockPort,
           upstreamServerPort: upstreamPort,
           careDummyServerPort: upstreamPort,
+          upstreamNodePath: null,
         },
         interceptGateway: {
           enabled: true,
           clientPort,
           upstreamPort,
+          autoStartUpstream: upstreamAutoStartDraft,
+          ...(workdirForGateway ? { upstreamWorkdir: workdirForGateway } : {}),
         },
       });
       if (r.ok) {
@@ -111,8 +132,9 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         setPortDraft(String(r.config.proxyServer.port));
         setClientPortDraft(String(r.config.interceptGateway?.clientPort ?? clientPort));
         setUpstreamPortDraft(String(r.config.interceptGateway?.upstreamPort ?? upstreamPort));
+        void reloadRuntimeStatus();
       } else {
-        setGatewayError("자동 가로채기 설정 저장에 실패했습니다.");
+        setGatewayError("게이트웨이 설정 저장에 실패했습니다.");
       }
     } finally {
       setSaveBusy(false);
@@ -132,7 +154,16 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         proxyServer: {
           upstreamAutoStart: upstreamAutoStartDraft,
           upstreamServerWorkdir: workdir || null,
+          upstreamNodePath: null,
         },
+        ...(config?.interceptGateway?.enabled
+          ? {
+              interceptGateway: {
+                upstreamWorkdir: workdir || null,
+                autoStartUpstream: upstreamAutoStartDraft,
+              },
+            }
+          : {}),
       });
       if (r.ok) {
         setConfig(r.config);
@@ -153,7 +184,18 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
     if (upstreamSaveError) setUpstreamSaveError("");
   };
   const modalSectionTitleClass = "typo-body-1-normal text-label-normal font-semibold";
-
+  const gatewayRunning = Boolean(runtimeStatus?.interceptGateway?.listening);
+  const gatewayLastError = runtimeStatus?.interceptGateway?.lastError?.trim() || runtimeStatus?.lastError?.trim() || "";
+  const upstreamRunning = Boolean(runtimeStatus?.upstreamSpawn?.running || runtimeStatus?.careMockSpawn?.running);
+  const upstreamLastError = runtimeStatus?.upstreamSpawn?.lastError?.trim() || runtimeStatus?.careMockSpawn?.lastError?.trim() || "";
+  const statusMode: "running" | "error" | "idle" = gatewayRunning ? "running" : gatewayLastError ? "error" : "idle";
+  const statusBadgeText = statusMode === "running" ? "STATUS: 실행" : statusMode === "error" ? "STATUS: 에러" : "STATUS: 준비";
+  const statusSummaryText =
+    statusMode === "running"
+      ? "네트워크 게이트웨이가 안정적으로 준비되었습니다."
+      : statusMode === "error"
+        ? gatewayLastError
+        : "아직 게이트웨이가 시작되지 않았습니다. 포트를 확인한 뒤 시작해 주세요.";
   if (config == null) {
     return (
       <div className="w-full space-y-5 p-8">
@@ -169,7 +211,7 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
           <h2 className="typo-title-2 text-label-normal font-bold">프록시 설정</h2>
           <p className="typo-body-2-normal text-label-assistant mt-2 leading-relaxed">
             모의 서버 및 요청/응답 방식을 구성합니다. <br />
-            프록시 설정을 통해 API 가로채기 및 업스트림 서버 관리를 효율적으로 제어할 수 있습니다.
+            프록시 설정을 통해 API 게이트웨이 및 업스트림 서버 관리를 효율적으로 제어할 수 있습니다.
           </p>
         </div>
         <button
@@ -193,9 +235,9 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         <p className={modalSectionTitleClass}>빠른 설정</p>
         <ul className="typo-body-2-normal text-label-assistant mt-3">
           <li className="mb-2">1. 프로젝트 서버 폴더 경로를 지정하세요.</li>
-          <li className="mb-2">2. 가로채기 포트와 서버 포트를 겹치지 않게 설정하세요.</li>
+          <li className="mb-2">2. 게이트웨이 포트와 서버 포트를 겹치지 않게 설정하세요.</li>
           <li>
-            3. <strong>&apos;가로채기 시작&apos;</strong> 버튼을 눌러 활성화하세요.
+            3. <strong>&apos;게이트웨이 시작&apos;</strong> 버튼을 눌러 활성화하세요.
           </li>
         </ul>
       </section>
@@ -231,6 +273,8 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
               }}
             />
           </div>
+        </div>
+        <div className="mt-3 flex justify-end">
           <Btn category="secondary" size="small" width="auto" className={MODAL_SAVE_BTN_CLASS} disabled={saveBusy} onClick={() => void onSaveUpstreamAutoStart()}>
             저장
           </Btn>
@@ -242,7 +286,7 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         <div className={`mb-3 ${modalSectionTitleClass}`}>포트 설정</div>
         <div className="flex items-center justify-between gap-5">
           <div className="">
-            <span className="typo-caption-1 text-label-primary mb-2">API 가로채기 포트 (게이트웨이)</span>
+            <span className="typo-caption-1 text-label-primary mb-2">게이트웨이 포트 (클라이언트)</span>
             <Input
               value={clientPortDraft}
               width="100%"
@@ -287,6 +331,21 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
         {gatewayError ? <p className="typo-caption-1 text-label-negative mt-3">{gatewayError}</p> : null}
       </section>
 
+      <div className="pb-5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <span className={`proxy-status-pill proxy-status-pill--${statusMode}`} role="status" aria-live="polite">
+            {statusBadgeText}
+          </span>
+          <p className="typo-body-2-normal min-w-0 flex-1 leading-snug text-gray-600">{statusSummaryText}</p>
+        </div>
+        {gatewayRunning ? (
+          <p className="typo-caption-1 text-label-assistant mt-2">
+            클라이언트 포트 {runtimeStatus?.interceptGateway?.port ?? "-"} 에서 게이트웨이가 동작 중입니다.{" "}
+            {upstreamRunning ? "업스트림 자동 실행: 동작 중" : upstreamLastError ? `업스트림 자동 실행 오류: ${upstreamLastError}` : "업스트림 자동 실행: 꺼짐 또는 대기 중"}
+          </p>
+        ) : null}
+      </div>
+
       <div className="flex flex-wrap items-center justify-end gap-3 border-t border-gray-100 pt-5">
         {config.interceptGateway?.enabled ? (
           <Btn category="secondary" size="medium" width="auto" className={MODAL_ACTION_BTN_CLASS} disabled={saveBusy} onClick={() => void onDisableGateway()}>
@@ -302,7 +361,7 @@ export default function ProxyServerSettingsCard({ onClose }: ProxyServerSettings
           startIcon={<span className="text-xs leading-none">▷</span>}
           onClick={() => void onApplyAutoIntercept()}
         >
-          가로채기 시작
+          게이트웨이 시작
         </Btn>
       </div>
     </div>

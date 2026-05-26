@@ -54,6 +54,22 @@ export function coerceMockApiLatencyMs(raw: unknown): Record<string, number> {
   return out;
 }
 
+export function coerceMockActiveApiResponses(raw: unknown): Record<string, import("@/types").MockActiveApiResponseRef> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, import("@/types").MockActiveApiResponseRef> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ks = String(k).trim();
+    if (!ks || !v || typeof v !== "object" || Array.isArray(v)) continue;
+    const o = v as Record<string, unknown>;
+    const responseValue = typeof o.responseValue === "string" ? o.responseValue.trim() : "";
+    if (!responseValue) continue;
+    const ed = String(o.editorType ?? "default").toLowerCase();
+    const editorType: "default" | "test" | "error" = ed === "test" ? "test" : ed === "error" ? "error" : "default";
+    out[ks] = { responseValue, editorType };
+  }
+  return out;
+}
+
 export function isInterceptGatewayMockPortCollision(config: AppProxyConfig): boolean {
   const ig = config.interceptGateway;
   if (!config.proxyServer.enabled || !ig?.enabled) return false;
@@ -372,6 +388,7 @@ function defaultAppProxyConfig(): AppProxyConfig {
     mockProfile: "legacy-tran-envelope",
     mockTranAliases: {},
     mockApiLatencyMs: {},
+    mockActiveApiResponses: {},
   };
 }
 
@@ -455,6 +472,7 @@ export async function readAppProxyConfigDisk(): Promise<AppProxyConfig> {
     const mockTranAliases = coerceMockTranAliases(o.mockTranAliases);
     const mockProfile = coerceMockProfile(o.mockProfile);
     const mockApiLatencyMs = coerceMockApiLatencyMs(o.mockApiLatencyMs);
+    const mockActiveApiResponses = coerceMockActiveApiResponses(o.mockActiveApiResponses);
 
     return {
       version: o.version === APP_PROXY_CONFIG_VERSION_LEGACY ? APP_PROXY_CONFIG_VERSION : Math.floor(Number(o.version)),
@@ -476,6 +494,7 @@ export async function readAppProxyConfigDisk(): Promise<AppProxyConfig> {
       mockProfile,
       mockTranAliases,
       mockApiLatencyMs,
+      mockActiveApiResponses,
     };
   } catch {
     return defaultAppProxyConfig();
@@ -610,7 +629,12 @@ async function mergeAppProxyConfigDisk(partial: unknown): Promise<AppProxyConfig
 
   let mockApiLatencyMs = coerceMockApiLatencyMs(cur.mockApiLatencyMs);
   if ("mockApiLatencyMs" in o) {
-    mockApiLatencyMs = { ...mockApiLatencyMs, ...coerceMockApiLatencyMs(o.mockApiLatencyMs) };
+    mockApiLatencyMs = coerceMockApiLatencyMs(o.mockApiLatencyMs);
+  }
+
+  let mockActiveApiResponses = coerceMockActiveApiResponses(cur.mockActiveApiResponses);
+  if ("mockActiveApiResponses" in o) {
+    mockActiveApiResponses = coerceMockActiveApiResponses(o.mockActiveApiResponses);
   }
 
   const next: AppProxyConfig = {
@@ -633,6 +657,7 @@ async function mergeAppProxyConfigDisk(partial: unknown): Promise<AppProxyConfig
     mockProfile,
     mockTranAliases,
     mockApiLatencyMs,
+    mockActiveApiResponses,
   };
   await fs.writeFile(getAppProxyConfigPath(), JSON.stringify(next, null, 2), "utf-8");
   return next;

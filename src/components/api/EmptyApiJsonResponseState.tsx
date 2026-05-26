@@ -7,6 +7,8 @@ import EmptyJsonIcon from "@/assets/svg/EmptyJsonIcon";
 import ApiResponseStatus from "@/components/api/ApiResponseStatus";
 import Btn from "@/components/common/Btn";
 
+import { navigateApp } from "@/libs/app-navigation";
+
 export interface EmptyApiJsonResponseStateProps {
   apiName: string;
 }
@@ -33,7 +35,7 @@ export default function EmptyApiJsonResponseState({ apiName }: EmptyApiJsonRespo
               width={220}
               className="shadow-[0_8px_24px_rgba(19,164,236,0.35)]"
               onClick={() => {
-                window.location.href = href;
+                navigateApp(href);
               }}
             >
               첫 응답 추가하기

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 
 import Header from "@/components/shared/Header";
+import { navigateApp } from "@/libs/app-navigation";
 import {
   SITE_GITHUB_DEFAULT_BRANCH,
   SITE_GITHUB_LATEST_RELEASE_URL,
@@ -24,11 +25,7 @@ function goBackOrHome() {
     window.history.back();
     return;
   }
-  if (window.location.protocol === "file:") {
-    window.location.hash = "home";
-    return;
-  }
-  window.location.href = "/";
+  navigateApp("/");
 }
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {

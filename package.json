@@ -1,6 +1,6 @@
 {
   "name": "proxy",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -24,13 +24,17 @@
     "licenses": "node scripts/generate-licenses.js",
     "docs:data-guide-pdf": "npx --yes md-to-pdf docs/data-lifecycle-guide.md",
     "docs:project-overview-ppt": "node scripts/generate-project-overview-ppt.mjs",
+    "docs:project-ppt": "node scripts/generate-project-presentation-ppt.mjs",
+    "docs:stakeholder-ppt": "node scripts/generate-stakeholder-presentation-ppt.mjs",
     "start": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite preview'",
     "dev": "bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite dev'",
     "build": "npm run typecheck && bash -l -c 'source ~/.nvm/nvm.sh 2>/dev/null; nvm use 2>/dev/null; electron-vite build'",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
-    "build:mac": "electron-vite build && electron-builder --mac",
+    "build:mac": "electron-vite build && electron-builder --mac --arm64",
+    "build:mac:unsigned": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 -c.mac.identity=null -c.mac.notarize=false -c.mac.hardenedRuntime=false",
+    "build:mac:release": "electron-vite build && electron-builder --mac --arm64 -c.mac.notarize=true",
     "build:linux": "electron-vite build && electron-builder --linux"
   },
   "dependencies": {

@@ -11,6 +11,7 @@ import ApiResponseRadioList from "@/components/api/ApiResponseRadioList";
 import ApiResponseStatus from "@/components/api/ApiResponseStatus";
 
 // Libs
+import { navigateApp } from "@/libs/app-navigation";
 import { type ActiveApiResponseState, getApiResponseGroups, type ApiResponseItem } from "@/libs/datadummy/api";
 
 export interface ApiResponseSectionProps {
@@ -30,7 +31,7 @@ function ApiResponseColumnHeader({ title, apiName, type }: { title: string; apiN
       <div className="flex min-w-0 items-center gap-2">
         <span className="typo-body-1-normal text-label-normal font-bold tracking-wide">{title}</span>
       </div>
-      <button type="button" onClick={() => (window.location.href = `/api/json?state=new&apiName=${encodeURIComponent(apiName)}&type=${type}`)} className="cursor-pointer">
+      <button type="button" onClick={() => navigateApp(`/api/json?state=new&apiName=${encodeURIComponent(apiName)}&type=${type}`)} className="cursor-pointer">
         <AddBtnIcon />
       </button>
     </div>

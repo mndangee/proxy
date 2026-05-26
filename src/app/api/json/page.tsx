@@ -12,8 +12,15 @@ import Navigation from "@/components/shared/Navigation";
 import { NoticeModal } from "@/components/common/modals";
 
 // Libs
+import { getAppSearchParams, navigateApp } from "@/libs/app-navigation";
 import { API_RESPONSE_TYPE_OPTIONS, getApiResponseItem, markRegisteredApiJsonResponse, setStoredActiveApiResponse } from "@/libs/datadummy/api";
-import { formatSaveApiResponseUserError, getProjectForApiName, upsertSavedApiResponse } from "@/libs/projects/store";
+import {
+  formatSaveApiResponseUserError,
+  getApiEndpointByName,
+  getProjectForApiName,
+  persistMockActiveApiResponse,
+  upsertSavedApiResponse,
+} from "@/libs/projects/store";
 import { slugify } from "@/libs/datadummy/home";
 
 function escapeHtml(value: string) {
@@ -225,7 +232,7 @@ function EditableCodeEditor({
 }
 
 export default function ApiJsonPage() {
-  const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const searchParams = typeof window !== "undefined" ? getAppSearchParams() : null;
   const editorState = searchParams?.get("state") ?? null;
   const sourceApiName = searchParams?.get("apiName") ?? "";
   const sourceType = searchParams?.get("type") ?? "default";
@@ -262,7 +269,7 @@ export default function ApiJsonPage() {
     const nav = noticeNavigateApi;
     setNoticeOpen(false);
     setNoticeNavigateApi(null);
-    if (nav) window.location.href = `/api/${encodeURIComponent(nav)}`;
+    if (nav) navigateApp(`/api/${encodeURIComponent(nav)}`);
   };
 
   const formatConfigurationOnEditorBlur = useCallback(() => {
@@ -312,24 +319,37 @@ export default function ApiJsonPage() {
 
   const useAsResponse = () => {
     if (!sourceApiName) return;
+    const activeValue = responseValue?.trim();
+    if (!activeValue) {
+      showNotice("먼저 응답을 저장한 뒤 「응답으로 사용」을 눌러 주세요.");
+      return;
+    }
     const parsedConfig = parseConfigurationJson(configuration);
     if (!parsedConfig.ok) {
       showNotice(JSON_FORMAT_NOTICE_MESSAGE);
       return;
     }
 
+    const editorType = responseType.type as "default" | "test" | "error";
+    const endpoint = getApiEndpointByName(sourceApiName);
+    const tran = endpoint?.tran?.trim();
     setStoredActiveApiResponse(sourceApiName, {
       apiName: sourceApiName,
-      responseValue,
-      type: responseType.type as "default" | "test" | "error",
+      responseValue: activeValue,
+      type: editorType,
       title: resourceTitle || sourceApiName,
       description: description || "사용중",
       configuration: parsedConfig.canonical,
     });
+    void persistMockActiveApiResponse(
+      sourceApiName,
+      { responseValue: activeValue, editorType },
+      { alsoKeys: tran && tran !== sourceApiName.trim() ? [tran] : [] },
+    );
     setConfiguration(parsedConfig.canonical);
     markRegisteredApiJsonResponse(sourceApiName);
 
-    window.location.href = `/api/${encodeURIComponent(sourceApiName)}`;
+    navigateApp(`/api/${encodeURIComponent(sourceApiName)}`);
   };
 
   const exportJson = () => {
@@ -365,7 +385,7 @@ export default function ApiJsonPage() {
         activeProjectSlug={jsonNavActiveProjectSlug}
         currentApiName={sourceApiName || null}
         jsonEditorApiName={sourceApiName || null}
-        onNewProject={() => (window.location.href = "/")}
+        onNewProject={() => navigateApp("/")}
       />
 
       <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
@@ -376,7 +396,7 @@ export default function ApiJsonPage() {
               onClick={() => {
                 const key = sourceApiName.trim();
                 if (key) {
-                  window.location.href = `/api/${encodeURIComponent(key)}`;
+                  navigateApp(`/api/${encodeURIComponent(key)}`);
                   return;
                 }
                 window.history.back();
@@ -421,7 +441,7 @@ export default function ApiJsonPage() {
                       width={88}
                       onClick={() => {
                         if (sourceApiName) {
-                          window.location.href = `/api/${encodeURIComponent(sourceApiName)}`;
+                          navigateApp(`/api/${encodeURIComponent(sourceApiName)}`);
                           return;
                         }
                         window.history.back();

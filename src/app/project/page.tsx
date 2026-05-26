@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // Assets
 import DownloadIcon from "@/assets/svg/DownloadIcon";
@@ -16,6 +16,7 @@ import Header from "@/components/shared/Header";
 import Navigation from "@/components/shared/Navigation";
 
 // Libs
+import { navigateApp } from "@/libs/app-navigation";
 import { markRegisteredApiJsonResponse } from "@/libs/datadummy/api";
 import { getProjectBySlug, getProjectRouteSlug } from "@/libs/datadummy/home";
 import {
@@ -38,10 +39,15 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const [importNotice, setImportNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [apiSearchQuery, setApiSearchQuery] = useState("");
   const apiTableRef = useRef<ApiEndpointsTableHandle>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
 
   const bumpList = useCallback(() => setListTick((t) => t + 1), []);
 
   const project = useMemo(() => getProjectBySlug(projectSlug), [projectSlug]);
+
+  useLayoutEffect(() => {
+    mainScrollRef.current?.scrollTo(0, 0);
+  }, [projectSlug]);
 
   useEffect(() => {
     if (!project?.id) return;
@@ -57,14 +63,14 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   if (!project) {
     return (
       <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
-        <Navigation activeProjectSlug={null} onNewProject={() => (window.location.href = "/")} />
+        <Navigation activeProjectSlug={null} onNewProject={() => navigateApp("/")} />
         <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
           <div className="border-border-enabled bg-background-white border-b">
             <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
               <button
                 type="button"
                 onClick={() => {
-                  window.location.href = "/";
+                  navigateApp("/");
                 }}
                 className="typo-caption-1 text-label-assistant hover:text-label-normal mb-1 w-fit cursor-pointer text-left transition-colors"
               >
@@ -126,14 +132,14 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
         onRegistered={bumpList}
         initialEndpoint={editingEndpoint}
       />
-      <Navigation activeProjectSlug={currentProjectSlug} onNewProject={() => (window.location.href = "/")} />
+      <Navigation activeProjectSlug={currentProjectSlug} onNewProject={() => navigateApp("/")} />
       <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <div className="border-border-enabled bg-background-white shrink-0 border-b">
           <div className="mx-auto w-full max-w-[1600px] px-6 pt-6">
             <button
               type="button"
               onClick={() => {
-                window.location.href = "/";
+                navigateApp("/");
               }}
               className="typo-caption-1 text-label-assistant hover:text-label-normal mb-1 w-fit cursor-pointer text-left transition-colors"
             >
@@ -143,7 +149,7 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
           <Header variant="sub" title={project.name} className="!pt-3" />
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-6 py-8">
+        <div ref={mainScrollRef} className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-6 py-8">
           <div className="mb-8 flex shrink-0 flex-wrap items-center justify-between gap-4">
             <div className={`typo-title-2 text-label-normal font-bold`}>{project.name}</div>
             <div className="flex flex-wrap gap-3">

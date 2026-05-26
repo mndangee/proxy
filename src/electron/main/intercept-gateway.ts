@@ -243,7 +243,7 @@ export async function applyInterceptGatewayFromConfig(): Promise<void> {
   }
   if (isInterceptGatewayMockUpstreamCollision(config)) {
     gatewayLastError =
-      "모의 서버 포트와 업스트림 포트가 같습니다. 가로채기 실패 시 넘길 백엔드와 DataForge 모의 조회 서버는 서로 다른 포트여야 합니다.";
+      "모의 서버 포트와 업스트림 포트가 같습니다. 게이트웨이 실패 시 넘길 백엔드와 DataForge 모의 조회 서버는 서로 다른 포트여야 합니다.";
     return;
   }
 

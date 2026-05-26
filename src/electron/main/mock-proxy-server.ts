@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { ipcMain } from "electron";
-import type { AppProxyConfig, MockProfileType } from "@/types";
+import type { AppProxyConfig, MockActiveApiResponseRef, MockProfileType } from "@/types";
 
 import { applyCareMockSpawnFromConfig, getCareMockSpawnStatus, stopCareMockSpawn, type CareMockSpawnStatus } from "./care-mock-spawn";
 import { getUpstreamSpawnStatus, type UpstreamSpawnStatus } from "./upstream-spawn";
@@ -13,6 +13,7 @@ import {
   getInterceptGatewayStatus,
   type InterceptGatewayStatus,
 } from "./intercept-gateway";
+import { tryParseApiResponseExportBundle } from "@/libs/datadummy/api";
 import {
   isInterceptGatewayMockPortCollision,
   isInterceptGatewayMockUpstreamCollision,
@@ -24,7 +25,7 @@ import {
   type ProjectManifest,
 } from "./project-fs";
 
-type StoreRow = { configuration: string; editorType: string };
+type StoreRow = { value?: string; configuration: string; editorType: string };
 
 let activeServer: http.Server | null = null;
 let activePort: number | null = null;
@@ -143,29 +144,59 @@ function mergeTranId(pathname: string, rawBody: string, contentType: string): st
 
 const MAX_MOCK_LATENCY_MS = 300_000;
 
-/** API 상세에 저장한 지연(ms) — lookup 키·mockTranAliases 와 맞춤 */
-function resolveMockLatencyMs(cfg: AppProxyConfig, lookupKey: string): number {
+function pickMockLatencyMs(map: Record<string, number>, key: string): number | null {
+  const ks = key.trim();
+  if (!ks) return null;
+  const v = map[ks];
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return Math.max(0, Math.min(MAX_MOCK_LATENCY_MS, Math.floor(v)));
+}
+
+/** API 상세에 저장한 지연(ms) — 요청 lookup 키·tran·API 이름·별칭 모두 시도 */
+async function resolveMockLatencyMs(cfg: AppProxyConfig, lookupKey: string, projectRoots: string[]): Promise<number> {
   const map = cfg.mockApiLatencyMs ?? {};
-  const clamp = (n: number) => Math.max(0, Math.min(MAX_MOCK_LATENCY_MS, Math.floor(n)));
-  const pick = (k: string): number | null => {
-    const v = map[k];
-    return typeof v === "number" && Number.isFinite(v) ? clamp(v) : null;
-  };
-  const direct = pick(lookupKey);
-  if (direct != null) return direct;
+  const direct = pickMockLatencyMs(map, lookupKey);
+  if (direct != null && direct > 0) return direct;
+
+  const keysToTry = new Set<string>();
+  const pathVariants = expandMockPathKeys(lookupKey, cfg.mockTranAliases);
+  for (const pv of pathVariants) keysToTry.add(pv);
+
+  for (const pv of pathVariants) {
+    const norm = normalizeMockLookupKey(pv);
+    for (const root of projectRoots) {
+      const items = await readApisIndex(root);
+      for (const row of items) {
+        const t = row.tran.trim();
+        const n = row.name.trim();
+        if (!n && !t) continue;
+        if (t === pv || n === pv || normalizeMockLookupKey(t) === norm || normalizeMockLookupKey(n) === norm) {
+          if (n) keysToTry.add(n);
+          if (t) keysToTry.add(t);
+        }
+      }
+    }
+  }
+
+  for (const k of keysToTry) {
+    if (k === lookupKey) continue;
+    const v = pickMockLatencyMs(map, k);
+    if (v != null && v > 0) return v;
+  }
+
   const aliases = cfg.mockTranAliases ?? {};
   const mappedName = aliases[lookupKey];
   if (mappedName) {
-    const p = pick(mappedName);
-    if (p != null) return p;
+    const p = pickMockLatencyMs(map, mappedName);
+    if (p != null && p > 0) return p;
   }
   for (const [tranKey, apiName] of Object.entries(aliases)) {
     if (apiName === lookupKey) {
-      const q = pick(tranKey);
-      if (q != null) return q;
+      const q = pickMockLatencyMs(map, tranKey);
+      if (q != null && q > 0) return q;
     }
   }
-  return 0;
+  return direct ?? 0;
 }
 
 function sleepMs(ms: number): Promise<void> {
@@ -261,10 +292,71 @@ function wrapEnvelopeResponse(tranId: string, data: unknown): string {
   });
 }
 
-function pickConfiguration(rows: StoreRow[] | undefined): string | null {
+function normalizeConfigurationForMock(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const bundle = tryParseApiResponseExportBundle(parsed);
+    if (bundle) return bundle.configuration.trim() || null;
+  } catch {
+    /* plain JSON string */
+  }
+  return trimmed;
+}
+
+function pickConfiguration(rows: StoreRow[] | undefined, active?: MockActiveApiResponseRef | null): string | null {
   if (!rows?.length) return null;
+  const responseValue = active?.responseValue?.trim();
+  if (responseValue) {
+    const byValue = rows.find((r) => (r.value ?? "").trim() === responseValue);
+    const fromValue = byValue ? normalizeConfigurationForMock(byValue.configuration) : null;
+    if (fromValue) return fromValue;
+  }
+  const editorType = active?.editorType;
+  if (editorType === "default" || editorType === "test" || editorType === "error") {
+    const byType = rows.find((r) => r.editorType === editorType);
+    const fromType = byType ? normalizeConfigurationForMock(byType.configuration) : null;
+    if (fromType) return fromType;
+  }
   const def = rows.find((r) => r.editorType === "default");
-  return (def ?? rows[0]).configuration;
+  const fallback = def ?? rows[0];
+  return fallback ? normalizeConfigurationForMock(fallback.configuration) : null;
+}
+
+/** tran·별칭으로 들어온 요청에 대해 API 이름에 저장된 활성 응답을 찾음 */
+async function resolveActiveMockResponseRef(
+  projectRoots: string[],
+  pathKey: string,
+  tranAliases: Record<string, string> | undefined,
+  activeByApiName?: Record<string, MockActiveApiResponseRef>,
+): Promise<MockActiveApiResponseRef | undefined> {
+  if (!activeByApiName || Object.keys(activeByApiName).length === 0) return undefined;
+
+  const trimmed = pathKey.trim();
+  if (trimmed && activeByApiName[trimmed]) return activeByApiName[trimmed];
+
+  const pathVariants = expandMockPathKeys(pathKey, tranAliases);
+  for (const pv of pathVariants) {
+    if (activeByApiName[pv]) return activeByApiName[pv];
+  }
+
+  for (const pv of pathVariants) {
+    const norm = normalizeMockLookupKey(pv);
+    for (const root of projectRoots) {
+      const items = await readApisIndex(root);
+      for (const row of items) {
+        const t = row.tran.trim();
+        const n = row.name.trim();
+        if (!n && !t) continue;
+        const matches = t === pv || n === pv || normalizeMockLookupKey(t) === norm || normalizeMockLookupKey(n) === norm;
+        if (!matches) continue;
+        if (n && activeByApiName[n]) return activeByApiName[n];
+        if (t && activeByApiName[t]) return activeByApiName[t];
+      }
+    }
+  }
+  return undefined;
 }
 
 /** `tran`·스토어 키(`name`)·URL 조각 비교용 */
@@ -310,11 +402,13 @@ async function findRawConfigurationFromProjects(
   projectRoots: string[],
   pathKey: string,
   tranAliases?: Record<string, string>,
+  activeByApiName?: Record<string, MockActiveApiResponseRef>,
 ): Promise<string | null> {
   const pathVariants = expandMockPathKeys(pathKey, tranAliases);
   if (pathVariants.size === 0) return null;
 
   const keysToTry = new Set<string>(pathVariants);
+  const resolvedActive = await resolveActiveMockResponseRef(projectRoots, pathKey, tranAliases, activeByApiName);
 
   for (const pv of pathVariants) {
     const norm = normalizeMockLookupKey(pv);
@@ -331,7 +425,20 @@ async function findRawConfigurationFromProjects(
           normalizeMockLookupKey(n) === norm
         ) {
           keysToTry.add(n);
+          if (t) keysToTry.add(t);
         }
+      }
+    }
+  }
+
+  if (resolvedActive) {
+    for (const k of keysToTry) {
+      if (!k) continue;
+      for (const projectRoot of projectRoots) {
+        const store = await readResponsesStoreFromDisk(projectRoot);
+        const rows = store.byApiName[k] as StoreRow[] | undefined;
+        const picked = pickConfiguration(rows, resolvedActive);
+        if (picked != null) return picked;
       }
     }
   }
@@ -341,7 +448,7 @@ async function findRawConfigurationFromProjects(
     for (const projectRoot of projectRoots) {
       const store = await readResponsesStoreFromDisk(projectRoot);
       const rows = store.byApiName[k] as StoreRow[] | undefined;
-      const picked = pickConfiguration(rows);
+      const picked = pickConfiguration(rows, undefined);
       if (picked != null) return picked;
     }
   }
@@ -445,7 +552,12 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
 
   const tranAliases = diskCfg.mockTranAliases;
 
-  let rawConfig: string | null = await findRawConfigurationFromProjects(projectRoots, lookupKey, tranAliases);
+  let rawConfig: string | null = await findRawConfigurationFromProjects(
+    projectRoots,
+    lookupKey,
+    tranAliases,
+    diskCfg.mockActiveApiResponses,
+  );
 
   if (rawConfig == null) {
     const mobilityPath = diskCfg.proxyServer.careDummyMobilityPath;
@@ -475,7 +587,7 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
     return;
   }
 
-  await sleepMs(resolveMockLatencyMs(diskCfg, lookupKey));
+  await sleepMs(await resolveMockLatencyMs(diskCfg, lookupKey, projectRoots));
 
   if (profile === "legacy-tran-envelope" && envelopeTranId) {
     res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", ...cors });

@@ -12,6 +12,7 @@ import MethodTag from "@/components/common/MethodTag";
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
 // Libs
+import { navigateApp } from "@/libs/app-navigation";
 import {
   formatProjectUpdatedLabel,
   getRecentModifiedApis,
@@ -38,7 +39,7 @@ function HistoryRow({ item }: { item: RecentModifiedApiItem }) {
       type="button"
       className="flex w-full cursor-pointer items-center justify-between border-b-1 border-gray-200 px-8 py-5 text-left transition-colors last:border-b-0"
       onClick={() => {
-        window.location.href = href;
+        navigateApp(href);
       }}
     >
       <div className="min-w-0 pr-4">

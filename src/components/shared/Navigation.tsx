@@ -19,6 +19,7 @@ import useInput from "@/hooks/useInput";
 
 // Libs
 import { getApiResponseGroups, type ApiResponseItem } from "@/libs/datadummy/api";
+import { getAppPathname, getAppSearchParams } from "@/libs/app-navigation";
 import {
   getEndpointsForProject,
   getProjectForApiName,
@@ -49,7 +50,7 @@ function jsonEditorHref(apiName: string, item: ApiResponseItem, editorType: "def
 
 function JsonEditorResponseNav({ apiName }: { apiName: string }) {
   const { localResponses, testResponses, errorResponses } = getApiResponseGroups(apiName);
-  const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const searchParams = typeof window !== "undefined" ? getAppSearchParams() : null;
   const currentResponseValue = searchParams?.get("responseValue") ?? "";
   const currentType = searchParams?.get("type") ?? "default";
 
@@ -94,7 +95,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
   const [apisTick, setApisTick] = useState(0);
 
   const navSearchInput = useInput();
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "";
+  const pathname = typeof window !== "undefined" ? getAppPathname() : "";
   const isApiJsonPage = pathname === "/api/json";
   const isApiDetailRoute = pathname.startsWith("/api/") && !isApiJsonPage;
   const fallbackApiName = isApiDetailRoute ? decodeURIComponent(pathname.replace("/api/", "")) : null;

@@ -8,7 +8,8 @@ import ProjectPage from '../../app/project/page'
 import ProjectApiPage from '../../app/api/page'
 import ApiJsonPage from '../../app/api/json/page'
 
-import { hydrateProjects } from '../../libs/projects/store'
+import { navigateApp } from '../../libs/app-navigation'
+import { getProjectForApiName, getProjectRouteSlug, hydrateProjects } from '../../libs/projects/store'
 
 const useHashFallback = typeof window !== 'undefined' && window.location?.protocol === 'file:'
 
@@ -51,18 +52,7 @@ function App(): React.JSX.Element {
 
   const navigate = useCallback((path: string) => {
     if (useHashFallback) {
-      try {
-        const baseHref = window.location.href.replace(/#.*$/, '')
-        const u = new URL(path.startsWith('/') ? path : `/${path}`, baseHref)
-        let pathPart = u.pathname.replace(/^\//, '').trim()
-        if (!pathPart) pathPart = 'home'
-        const search = u.search.replace(/^\?/, '')
-        window.location.hash = search ? `${pathPart}?${search}` : pathPart
-      } catch {
-        const raw = path.startsWith('/') ? path.slice(1) : path
-        const head = raw.split('?')[0] || 'home'
-        window.location.hash = head
-      }
+      navigateApp(path)
       const hashNow = window.location.hash.slice(1).trim()
       const routePart = hashNow.split('?')[0].split('#')[0] || 'home'
       setRoute(pathnameToRoute(`/${routePart}`))
@@ -147,10 +137,19 @@ function App(): React.JSX.Element {
     pageProps = { projectSlug }
   }
 
+  /** 프로젝트·API 목록 Nav 스크롤 유지: 같은 프로젝트 셸에서는 리마운트하지 않음 (본문은 페이지에서 별도 스크롤 리셋) */
+  let pageMountKey = locationKey
+  if (apiMatch && apiName) {
+    const p = getProjectForApiName(apiName)
+    pageMountKey = p ? `shell:api:${getProjectRouteSlug(p)}` : `shell:api-orphan:${encodeURIComponent(apiName)}`
+  } else if (projectMatch) {
+    pageMountKey = 'shell:project'
+  }
+
   return (
     <RootLayout>
       {bootReady ? (
-        <Page key={locationKey} {...pageProps} />
+        <Page key={pageMountKey} {...pageProps} />
       ) : (
         <div className="typo-body-1-normal text-label-assistant flex min-h-0 flex-1 items-center justify-center">불러오는 중…</div>
       )}

@@ -1,3 +1,5 @@
+import { navigateApp } from "@/libs/app-navigation";
+
 // Internal
 import Header from "../../components/shared/Header";
 import licensesData from "../../json/licenses.json";
@@ -17,11 +19,7 @@ function goBackOrHome() {
     window.history.back();
     return;
   }
-  if (window.location.protocol === "file:") {
-    window.location.hash = "home";
-    return;
-  }
-  window.location.href = "/";
+  navigateApp("/");
 }
 
 export default function LicensesPage() {

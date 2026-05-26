@@ -16,7 +16,7 @@ export interface AppProxyInterceptGatewayConfig {
   /**
    * 클라이언트(브라우저·앱)가 호출하는 API URL에 박혀 있는 포트(변경 불가인 경우 그대로 적음).
    * 게이트웨이 프로세스가 이 포트에서 listen 합니다.
-   * 같은 포트에 이미 개발 서버가 떠 있으면 동시에 둘 수 없으므로, 가로채기 시에는 그 프로세스를 끄고
+   * 같은 포트에 이미 개발 서버가 떠 있으면 동시에 둘 수 없으므로, 게이트웨이 사용 시에는 그 프로세스를 끄고
    * 실제 API 처리는 `upstreamPort`에서만 돌아가야 합니다(외부 프로젝트가 원래 두 포트를 쓰는 구조여야 함).
    */
   clientPort: number
@@ -73,7 +73,7 @@ export interface AppProxyConfig {
     /** @deprecated 레거시 호환 */
     careDummyServerPort?: number
   }
-  /** API 가로채기 게이트웨이 (클라이언트 포트 ↔ 업스트림 포트) */
+  /** API 게이트웨이 (클라이언트 포트 ↔ 업스트림 포트) */
   interceptGateway?: AppProxyInterceptGatewayConfig
   /**
    * 모의 서버의 요청 키 추출·응답 포맷 규칙
@@ -90,6 +90,16 @@ export interface AppProxyConfig {
    * API 이름(또는 모의 lookup 키)별 응답 지연(ms). Electron 모의 HTTP 서버가 본문 전송 전 대기.
    */
   mockApiLatencyMs?: Record<string, number>
+  /**
+   * API별 「사용」으로 지정한 활성 응답. 모의 HTTP 서버가 responses-store에서 이 응답을 반환.
+   */
+  mockActiveApiResponses?: Record<string, MockActiveApiResponseRef>
+}
+
+/** app-proxy-config — API 상세에서 「사용」한 응답 */
+export interface MockActiveApiResponseRef {
+  responseValue: string
+  editorType: 'default' | 'test' | 'error'
 }
 
 export interface Project {

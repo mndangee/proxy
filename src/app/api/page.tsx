@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 // Components
 import ApiExplorerHeader from "@/components/api/ApiExplorerHeader";
@@ -12,6 +12,7 @@ import { ApiJsonImportModal, NoticeModal } from "@/components/common/modals";
 import Navigation from "@/components/shared/Navigation";
 
 // Libs
+import { getAppPathname, navigateApp } from "@/libs/app-navigation";
 import type { ApiResponseItem } from "@/libs/datadummy/api";
 import {
   clearRegisteredApiJsonFlagIfNoSavedResponses,
@@ -30,26 +31,52 @@ import {
   getProjectForApiName,
   getProjectHref,
   getProjectRouteSlug,
-  getStoredApiLatencyMs,
+  clearMockActiveApiResponseIfMatches,
+  loadStoredApiLatencyMs,
+  persistMockActiveApiResponse,
   PROJECT_APIS_CHANGED_EVENT,
   PROJECT_API_RESPONSES_CHANGED_EVENT,
   setStoredApiLatencyMs,
   upsertSavedApiResponse,
 } from "@/libs/projects/store";
 
-function formatLatencyInputDisplay(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) return "0";
-  if (ms === 0) return "0";
-  const rounded = Math.round(ms * 1000) / 1000;
+const MAX_LATENCY_SECONDS = 300;
+
+function formatLatencySecondsFromMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0";
+  const sec = ms / 1000;
+  const rounded = Math.round(sec * 1000) / 1000;
   return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+}
+
+function parseLatencySecondsInput(raw: string): number | null {
+  const s = raw.trim().replace(/,/g, "").replace(/\s/g, "");
+  if (!s) return 0;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_LATENCY_SECONDS) return null;
+  return n;
 }
 
 interface ProjectApiPageProps {
   apiName: string;
 }
 
+function apiNameFromAppPath(): string {
+  if (typeof window === "undefined") return "";
+  const p = getAppPathname();
+  if (!p.startsWith("/api/")) return "";
+  const seg = p.slice("/api/".length).split("/")[0] ?? "";
+  if (!seg || seg === "json") return "";
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
 export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
-  const resolvedApiName = apiName || (typeof window !== "undefined" ? decodeURIComponent(window.location.pathname.replace("/api/", "")) : "");
+  const resolvedApiName = apiName || apiNameFromAppPath();
+  const mainScrollRef = useRef<HTMLDivElement>(null);
   const [apisTick, setApisTick] = useState(0);
   const [responseUiTick, setResponseUiTick] = useState(0);
   const [clientReady, setClientReady] = useState(false);
@@ -57,6 +84,9 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
   const [jsonImportOpen, setJsonImportOpen] = useState(false);
   const [deleteErrorNotice, setDeleteErrorNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [latencyInput, setLatencyInput] = useState("0");
+  const [latencyApplyBusy, setLatencyApplyBusy] = useState(false);
+  const [latencyAppliedHint, setLatencyAppliedHint] = useState<string | null>(null);
+  const latencyLoadSeqRef = useRef(0);
 
   useEffect(() => {
     const bump = () => setApisTick((t) => t + 1);
@@ -72,8 +102,21 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
     setClientReady(true);
   }, []);
 
+  useLayoutEffect(() => {
+    mainScrollRef.current?.scrollTo(0, 0);
+  }, [resolvedApiName]);
+
   useEffect(() => {
-    setLatencyInput(formatLatencyInputDisplay(getStoredApiLatencyMs(resolvedApiName)));
+    const loadSeq = ++latencyLoadSeqRef.current;
+    const apiKey = resolvedApiName.trim();
+    setLatencyInput("0");
+    setLatencyAppliedHint(null);
+    if (!apiKey) return;
+    void (async () => {
+      const ms = await loadStoredApiLatencyMs(apiKey);
+      if (latencyLoadSeqRef.current !== loadSeq) return;
+      setLatencyInput(formatLatencySecondsFromMs(ms));
+    })();
   }, [resolvedApiName]);
 
   /** API별 저장·등록 응답이 있을 때만 ApiResponseSection — 없으면 EmptyApiJsonResponseState */
@@ -106,31 +149,32 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
     return `${tran} · ${desc}`;
   }, [endpoint]);
 
-  const commitLatencyInput = () => {
+  const applyLatencyInput = () => {
     const key = resolvedApiName.trim();
-    if (!key) return;
-    const raw = latencyInput.trim().replace(/,/g, "").replace(/\s/g, "");
-    if (raw === "") {
-      void (async () => {
-        await setStoredApiLatencyMs(key, 0);
-        setLatencyInput("0");
-      })();
+    if (!key || latencyApplyBusy) return;
+    const seconds = parseLatencySecondsInput(latencyInput);
+    if (seconds === null) {
+      void loadStoredApiLatencyMs(key).then((ms) => setLatencyInput(formatLatencySecondsFromMs(ms)));
       return;
     }
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) {
-      setLatencyInput(formatLatencyInputDisplay(getStoredApiLatencyMs(key)));
-      return;
-    }
+    const ms = Math.round(seconds * 1000);
+    const tran = endpoint?.tran?.trim();
+    const alsoKeys = tran && tran !== key ? [tran] : [];
+    setLatencyApplyBusy(true);
     void (async () => {
-      await setStoredApiLatencyMs(key, n);
-      setLatencyInput(formatLatencyInputDisplay(n));
+      try {
+        await setStoredApiLatencyMs(key, ms, { alsoKeys });
+        setLatencyInput(formatLatencySecondsFromMs(ms));
+        setLatencyAppliedHint(ms > 0 ? `${formatLatencySecondsFromMs(ms)}초 지연이 적용되었습니다.` : "응답 지연이 해제되었습니다.");
+      } finally {
+        setLatencyApplyBusy(false);
+      }
     })();
   };
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
-      <Navigation activeProjectSlug={activeProjectSlug} currentApiName={resolvedApiName} onNewProject={() => (window.location.href = "/")} />
+      <Navigation activeProjectSlug={activeProjectSlug} currentApiName={resolvedApiName} onNewProject={() => navigateApp("/")} />
       <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <NoticeModal isOpen={deleteErrorNotice.open} onClose={() => setDeleteErrorNotice({ open: false, message: "" })} message={deleteErrorNotice.message} anchorMain />
         <ApiJsonImportModal
@@ -164,6 +208,11 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
               description,
               configuration,
             });
+            void persistMockActiveApiResponse(
+              resolvedApiName,
+              { responseValue: result.value, editorType: activeType },
+              { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
+            );
             markRegisteredApiJsonResponse(resolvedApiName);
             setCheckedValue(result.value);
             setResponseUiTick((t) => t + 1);
@@ -175,7 +224,7 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
               type="button"
               onClick={() => {
                 if (project) {
-                  window.location.href = getProjectHref(project);
+                  navigateApp(getProjectHref(project));
                   return;
                 }
                 window.history.back();
@@ -193,14 +242,23 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
             currentResponseValue={activeResponse.responseValue}
             onJsonAddClick={() => setJsonImportOpen(true)}
             onSettingsClick={() => {
-              window.location.href = getJsonEditorHrefForSelectedValue(resolvedApiName, checkedValue);
+              navigateApp(getJsonEditorHrefForSelectedValue(resolvedApiName, checkedValue));
             }}
           />
         </div>
-        <div className="min-w-0 flex-1 overflow-auto px-6 py-8">
+        <div ref={mainScrollRef} className="min-w-0 flex-1 overflow-auto px-6 py-8">
           <div className="mx-auto w-full max-w-[1600px] space-y-6">
             {endpoint ? (
-              <ApiResponseLatencyField value={latencyInput} onValueChange={setLatencyInput} onCommit={commitLatencyInput} />
+              <ApiResponseLatencyField
+                value={latencyInput}
+                onValueChange={(v) => {
+                  setLatencyInput(v);
+                  if (latencyAppliedHint) setLatencyAppliedHint(null);
+                }}
+                onApply={applyLatencyInput}
+                applyBusy={latencyApplyBusy}
+                appliedHint={latencyAppliedHint}
+              />
             ) : null}
             {!endpoint ? (
               <div className="flex flex-col items-center justify-center px-6 py-20 text-center">
@@ -221,14 +279,20 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
                 setCheckedValue={setCheckedValue}
                 activeResponse={activeResponse}
                 onApplyActiveResponse={(item: ApiResponseItem) => {
+                  const editorType = item.type === "local" ? "default" : item.type === "test" ? "test" : "error";
                   setStoredActiveApiResponse(resolvedApiName, {
                     apiName: resolvedApiName,
                     responseValue: item.value,
-                    type: item.type === "local" ? "default" : item.type === "test" ? "test" : "error",
+                    type: editorType,
                     title: item.label,
                     description: item.description,
                     configuration: item.configuration,
                   });
+                  void persistMockActiveApiResponse(
+                    resolvedApiName,
+                    { responseValue: item.value, editorType },
+                    { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
+                  );
                   markRegisteredApiJsonResponse(resolvedApiName);
                   setResponseUiTick((t) => t + 1);
                 }}
@@ -244,6 +308,9 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
                     return;
                   }
                   clearStoredActiveApiResponseIfMatches(resolvedApiName, item.value);
+                  void clearMockActiveApiResponseIfMatches(resolvedApiName, item.value, {
+                    alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [],
+                  });
                   clearRegisteredApiJsonFlagIfNoSavedResponses(resolvedApiName);
                   setResponseUiTick((t) => t + 1);
                 }}

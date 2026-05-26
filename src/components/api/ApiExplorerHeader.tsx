@@ -9,6 +9,8 @@ import StarIcon from "@/assets/svg/StarIcon";
 // Components
 import Btn from "@/components/common/Btn";
 
+import { navigateApp } from "@/libs/app-navigation";
+
 export type ApiExplorerViewMode = "definition" | "settings";
 
 export interface ApiExplorerHeaderProps {
@@ -78,7 +80,9 @@ export default function ApiExplorerHeader({
                 onSettingsClick();
                 return;
               }
-              window.location.href = `/api/json?state=edit&apiName=${encodeURIComponent(title)}&type=${currentType}${currentResponseValue ? `&responseValue=${encodeURIComponent(currentResponseValue)}` : ""}`;
+              navigateApp(
+                `/api/json?state=edit&apiName=${encodeURIComponent(title)}&type=${currentType}${currentResponseValue ? `&responseValue=${encodeURIComponent(currentResponseValue)}` : ""}`,
+              );
             }}
           >
             더미설정

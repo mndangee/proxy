@@ -1,5 +1,14 @@
-import type { ApiEndpoint, AppProxyConfig, AppProxyInterceptGatewayConfig, LinkedClientEntry, MockProfileType, Project } from "@/types";
+import type {
+  ApiEndpoint,
+  AppProxyConfig,
+  AppProxyInterceptGatewayConfig,
+  LinkedClientEntry,
+  MockActiveApiResponseRef,
+  MockProfileType,
+  Project,
+} from "@/types";
 
+import { getAppSearchParams } from "@/libs/app-navigation";
 import { buildCareTranLookup, findCareForProxyApi, parseSfdModuleInterfaces } from "@/libs/care/sfdModuleInterfaces";
 import { slugify } from "@/libs/slugify";
 
@@ -134,10 +143,27 @@ function defaultAppProxyConfig(): AppProxyConfig {
     mockProfile: "legacy-tran-envelope",
     mockTranAliases: {},
     mockApiLatencyMs: {},
+    mockActiveApiResponses: {},
   };
 }
 
 const MAX_BROWSER_MOCK_API_LATENCY_MS = 300_000;
+
+function coerceBrowserMockActiveApiResponses(raw: unknown): Record<string, MockActiveApiResponseRef> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, MockActiveApiResponseRef> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const ks = String(k).trim();
+    if (!ks || !v || typeof v !== "object" || Array.isArray(v)) continue;
+    const o = v as Record<string, unknown>;
+    const responseValue = typeof o.responseValue === "string" ? o.responseValue.trim() : "";
+    if (!responseValue) continue;
+    const ed = String(o.editorType ?? "default").toLowerCase();
+    const editorType: MockActiveApiResponseRef["editorType"] = ed === "test" ? "test" : ed === "error" ? "error" : "default";
+    out[ks] = { responseValue, editorType };
+  }
+  return out;
+}
 
 function coerceBrowserMockApiLatencyMs(raw: unknown): Record<string, number> {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -249,6 +275,7 @@ function readBrowserAppProxyConfig(): AppProxyConfig {
     const mockTranAliases = coerceBrowserMockTranAliases(o.mockTranAliases);
     const mockProfile = coerceBrowserMockProfile(o.mockProfile);
     const mockApiLatencyMs = coerceBrowserMockApiLatencyMs(o.mockApiLatencyMs);
+    const mockActiveApiResponses = coerceBrowserMockActiveApiResponses(o.mockActiveApiResponses);
 
     return {
       version: APP_PROXY_CONFIG_FILE_VERSION,
@@ -270,6 +297,7 @@ function readBrowserAppProxyConfig(): AppProxyConfig {
       mockProfile,
       mockTranAliases,
       mockApiLatencyMs,
+      mockActiveApiResponses,
     };
   } catch {
     return defaultAppProxyConfig();
@@ -405,6 +433,7 @@ interface ProjectsDiskApi {
     mockTranAliases?: Record<string, string> | null;
     mockProfile?: MockProfileType;
     mockApiLatencyMs?: Record<string, number> | null;
+    mockActiveApiResponses?: Record<string, MockActiveApiResponseRef> | null;
   }) => Promise<unknown>;
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<unknown>;
   getMockProxyStatus: () => Promise<unknown>;
@@ -1544,6 +1573,7 @@ export async function setAppProxyConfig(
     mockTranAliases?: Record<string, string> | null;
     mockProfile?: MockProfileType;
     mockApiLatencyMs?: Record<string, number> | null;
+    mockActiveApiResponses?: Record<string, MockActiveApiResponseRef> | null;
   },
 ): Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }> {
   const disk = getProjectsApi();
@@ -1669,13 +1699,13 @@ export async function setAppProxyConfig(
 
   let mockApiLatencyMs = coerceBrowserMockApiLatencyMs(cur.mockApiLatencyMs);
   if (partial.mockApiLatencyMs !== undefined) {
-    mockApiLatencyMs =
-      partial.mockApiLatencyMs == null
-        ? {}
-        : {
-            ...coerceBrowserMockApiLatencyMs(cur.mockApiLatencyMs),
-            ...coerceBrowserMockApiLatencyMs(partial.mockApiLatencyMs),
-          };
+    mockApiLatencyMs = partial.mockApiLatencyMs == null ? {} : coerceBrowserMockApiLatencyMs(partial.mockApiLatencyMs);
+  }
+
+  let mockActiveApiResponses = coerceBrowserMockActiveApiResponses(cur.mockActiveApiResponses);
+  if (partial.mockActiveApiResponses !== undefined) {
+    mockActiveApiResponses =
+      partial.mockActiveApiResponses == null ? {} : coerceBrowserMockActiveApiResponses(partial.mockActiveApiResponses);
   }
 
   const next: AppProxyConfig = {
@@ -1701,6 +1731,7 @@ export async function setAppProxyConfig(
     mockProfile,
     mockTranAliases,
     mockApiLatencyMs,
+    mockActiveApiResponses,
   };
   writeBrowserAppProxyConfig(next);
   return { ok: true, config: next };
@@ -1963,16 +1994,10 @@ export async function getProjectsRootPath(): Promise<string | null> {
   return (await disk.getRootPath()) as string;
 }
 
-/** 홈에서 즐겨찾기 탭 — `/?tab=favorites` 또는 `file:` + hash `#home?tab=favorites` */
+/** 홈에서 즐겨찾기 탭 — `/?tab=favorites` 또는 `file:` 해시 `#home?tab=favorites` (`getAppSearchParams`와 동일 규칙) */
 export function readHomeProjectTabFromUrl(): "all" | "favorites" {
   if (typeof window === "undefined") return "all";
-  if (window.location.protocol === "file:") {
-    const hash = window.location.hash.slice(1).trim();
-    const qi = hash.indexOf("?");
-    const qs = qi >= 0 ? hash.slice(qi + 1) : "";
-    return new URLSearchParams(qs).get("tab") === "favorites" ? "favorites" : "all";
-  }
-  return new URLSearchParams(window.location.search).get("tab") === "favorites" ? "favorites" : "all";
+  return getAppSearchParams().get("tab") === "favorites" ? "favorites" : "all";
 }
 
 /** 카드·LNB 등에서 쓰는 `/project/:slug` 세그먼트 (한글 이름은 folderName·id로 안정화) */
@@ -2031,32 +2056,163 @@ function writeBrowserApiLatencyMap(map: Record<string, number>) {
   window.localStorage.setItem(BROWSER_API_LATENCY_STORAGE_KEY, JSON.stringify(map));
 }
 
-export function getStoredApiLatencyMs(apiName: string): number {
-  const key = apiName.trim();
-  if (!key) return 0;
-  const v = readBrowserApiLatencyMap()[key];
+function pickLatencyMsFromMap(map: Record<string, number>, key: string): number {
+  const v = map[key.trim()];
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-export async function setStoredApiLatencyMs(apiName: string, ms: number): Promise<void> {
+function hasLatencyKey(map: Record<string, number>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(map, key.trim());
+}
+
+export function getStoredApiLatencyMs(apiName: string): number {
+  const key = apiName.trim();
+  if (!key) return 0;
+  const lsMap = readBrowserApiLatencyMap();
+  if (hasLatencyKey(lsMap, key)) return pickLatencyMsFromMap(lsMap, key);
+  return pickLatencyMsFromMap(readBrowserAppProxyConfig().mockApiLatencyMs ?? {}, key);
+}
+
+/** Electron 등 — 저장된 API 응답 지연(ms) 조회 */
+export async function loadStoredApiLatencyMs(apiName: string): Promise<number> {
+  const key = apiName.trim();
+  if (!key) return 0;
+  const lsMap = readBrowserApiLatencyMap();
+  if (hasLatencyKey(lsMap, key)) return pickLatencyMsFromMap(lsMap, key);
+  try {
+    const cfg = await getAppProxyConfig();
+    const diskMap = cfg.mockApiLatencyMs ?? {};
+    if (hasLatencyKey(diskMap, key)) return pickLatencyMsFromMap(diskMap, key);
+    return 0;
+  } catch {
+    return getStoredApiLatencyMs(key);
+  }
+}
+
+export async function setStoredApiLatencyMs(apiName: string, ms: number, options?: { alsoKeys?: string[] }): Promise<void> {
   const key = apiName.trim();
   if (!key) return;
   const n = typeof ms === "number" && Number.isFinite(ms) ? Math.max(0, Math.min(MAX_BROWSER_MOCK_API_LATENCY_MS, Math.floor(ms))) : 0;
+  const keys = new Set<string>([key]);
+  for (const alt of options?.alsoKeys ?? []) {
+    const t = alt.trim();
+    if (t) keys.add(t);
+  }
+
   const map = readBrowserApiLatencyMap();
-  if (n === 0) delete map[key];
-  else map[key] = n;
+  for (const k of keys) {
+    if (n === 0) delete map[k];
+    else map[k] = n;
+  }
   writeBrowserApiLatencyMap(map);
+
+  const syncBrowserCfgLatency = (merged: Record<string, number>) => {
+    const curBrowser = readBrowserAppProxyConfig();
+    writeBrowserAppProxyConfig({ ...curBrowser, mockApiLatencyMs: merged });
+  };
 
   const disk = getProjectsApi();
   if (disk && typeof disk.setAppProxyConfig === "function") {
     try {
       const cur = await getAppProxyConfig();
       const merged: Record<string, number> = { ...(cur.mockApiLatencyMs ?? {}) };
-      if (n === 0) delete merged[key];
-      else merged[key] = n;
-      await disk.setAppProxyConfig({ mockApiLatencyMs: merged });
+      for (const k of keys) {
+        if (n === 0) delete merged[k];
+        else merged[k] = n;
+      }
+      const res = await disk.setAppProxyConfig({ mockApiLatencyMs: merged });
+      if (res && typeof res === "object" && "ok" in res && res.ok && res.config) {
+        syncBrowserCfgLatency(res.config.mockApiLatencyMs ?? merged);
+      } else {
+        syncBrowserCfgLatency(merged);
+      }
     } catch {
-      /* keep localStorage */
+      const curBrowser = readBrowserAppProxyConfig();
+      const merged: Record<string, number> = { ...(curBrowser.mockApiLatencyMs ?? {}) };
+      for (const k of keys) {
+        if (n === 0) delete merged[k];
+        else merged[k] = n;
+      }
+      syncBrowserCfgLatency(merged);
     }
+  } else {
+    const curBrowser = readBrowserAppProxyConfig();
+    const merged: Record<string, number> = { ...(curBrowser.mockApiLatencyMs ?? {}) };
+    for (const k of keys) {
+      if (n === 0) delete merged[k];
+      else merged[k] = n;
+    }
+    syncBrowserCfgLatency(merged);
+  }
+}
+
+/** API 상세 「사용」 — 모의 HTTP 서버가 읽을 활성 응답을 app-proxy-config에 저장 */
+export async function persistMockActiveApiResponse(
+  apiName: string,
+  active: MockActiveApiResponseRef | null,
+  options?: { alsoKeys?: string[] },
+): Promise<void> {
+  const keys = new Set<string>();
+  const primary = apiName.trim();
+  if (primary) keys.add(primary);
+  for (const alt of options?.alsoKeys ?? []) {
+    const t = alt.trim();
+    if (t) keys.add(t);
+  }
+  if (keys.size === 0) return;
+
+  const buildMerged = (cur: Record<string, MockActiveApiResponseRef>) => {
+    const merged = { ...cur };
+    if (!active?.responseValue?.trim()) {
+      for (const k of keys) delete merged[k];
+    } else {
+      const entry = { responseValue: active.responseValue.trim(), editorType: active.editorType };
+      for (const k of keys) merged[k] = entry;
+    }
+    return merged;
+  };
+
+  const disk = getProjectsApi();
+  if (disk && typeof disk.setAppProxyConfig === "function") {
+    try {
+      const cur = await getAppProxyConfig();
+      const merged = buildMerged(cur.mockActiveApiResponses ?? {});
+      await disk.setAppProxyConfig({ mockActiveApiResponses: merged });
+      const browserCur = readBrowserAppProxyConfig();
+      writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: merged });
+    } catch {
+      const browserCur = readBrowserAppProxyConfig();
+      writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}) });
+    }
+  } else {
+    const browserCur = readBrowserAppProxyConfig();
+    writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}) });
+  }
+}
+
+export async function clearMockActiveApiResponseIfMatches(
+  apiName: string,
+  responseValue: string,
+  options?: { alsoKeys?: string[] },
+): Promise<void> {
+  const rv = responseValue.trim();
+  if (!rv) return;
+  const keys = new Set<string>();
+  const primary = apiName.trim();
+  if (primary) keys.add(primary);
+  for (const alt of options?.alsoKeys ?? []) {
+    const t = alt.trim();
+    if (t) keys.add(t);
+  }
+  try {
+    const cfg = await getAppProxyConfig();
+    const map = cfg.mockActiveApiResponses ?? {};
+    const matched = [...keys].some((k) => map[k]?.responseValue === rv);
+    if (matched) await persistMockActiveApiResponse(primary, null, options);
+  } catch {
+    const browserCur = readBrowserAppProxyConfig();
+    const map = browserCur.mockActiveApiResponses ?? {};
+    const matched = [...keys].some((k) => map[k]?.responseValue === rv);
+    if (matched) await persistMockActiveApiResponse(primary, null, options);
   }
 }
