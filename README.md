@@ -184,9 +184,19 @@ Electron에서는 **`app.getPath("userData")`** 아래에 **`DataForge-projects`
 
 ## 프로젝트 실행
 
+Node.js 24를 사용합니다. 운영체제와 관계없이 저장소에서 다음 명령으로 실행할 수 있습니다.
+
+```bash
+npm install
+npm run dev
+```
+
+- Windows에서는 PowerShell 또는 명령 프롬프트에서 같은 명령을 사용합니다. Bash나 NVM은 필수가 아닙니다.
+- macOS에서 NVM을 사용한다면 최초 실행 전에 `nvm use`로 `.nvmrc`의 Node 버전을 선택할 수 있습니다.
+
 ### 사전 요구 사항
 
-- **Node.js** 20.x 이상 권장 (저장소는 `.nvmrc` 기준 **Node 24** 사용을 가정할 수 있음).
+- **Node.js** 24.x (`package.json`과 `.nvmrc` 기준)
 - **npm** 9.x 이상
 
 ### Node를 찾지 못할 때
@@ -210,10 +220,48 @@ npm run licenses   # 선택: 라이선스 페이지용 JSON 생성
 
 ```sh
 npm run dev
+# macOS — Apple 개발자 등록·릴리스 DMG 없이 실행
+./run-mac
+# 또는
+npm run run:mac
 ```
 
 - Electron 창이 열리며 Vite 개발 서버와 연동됩니다.
 - 브라우저에서 Vite만 띄운 경우(예: `http://localhost:5173`)에도 동일한 페이지 구조로 동작할 수 있습니다(엔트리 설정에 따름).
+
+### macOS에서 서명 없이 실행 (다운로드 없이)
+
+릴리스 **DMG를 받지 않고**, **Apple Developer Program 등록 없이** 저장소에서 바로 쓸 수 있습니다.
+
+| 방법 | 명령 | 설명 |
+| ---- | ---- | ---- |
+| **권장** | `./run-mac` 또는 `npm run run:mac` | 소스에서 개발 모드 실행. 서명·패키징 불필요 |
+| 로컬 `.app` | `./run-mac --app` 또는 `npm run run:mac:app` | 개발자 계정 없이 빌드 후 로컬 임시 서명(ad-hoc)과 Gatekeeper 격리 속성 정리를 거쳐 실행 |
+
+```sh
+git clone https://github.com/mndangee/proxy.git
+cd proxy
+npm install
+./run-mac
+```
+
+패키징된 앱만 필요할 때(여전히 서명·공증 없음):
+
+```sh
+npm run build:mac:unsigned
+npm run run:mac:app
+```
+
+다른 Mac 사용자에게 사내·테스트용 ZIP으로 전달할 때:
+
+```sh
+npm run bundle:mac:unsigned:arm64 # Apple Silicon(M1 이상)
+npm run bundle:mac:unsigned:x64   # Intel Mac
+```
+
+생성된 `dist/proxy-mac-unsigned-{아키텍처}.zip`에는 `proxy.app`, `open.mac.command`, `README-MAC.txt`가 포함됩니다. 사용자는 압축을 푼 뒤 `open.mac.command`를 더블클릭합니다.
+
+> `--app` 방식은 직접 빌드한 앱에만 로컬 임시 서명과 `xattr -cr`을 적용합니다. 출처를 모르는 앱의 보안 검사를 해제하는 용도가 아닙니다. 팀 배포용은 `build:mac:release`(Apple 인증서 서명·공증)를 사용하세요.
 
 ### 빌드
 
@@ -221,6 +269,9 @@ npm run dev
 npm run build
 npm run build:mac | build:win | build:linux
 ```
+
+- `npm run build:win`: 일반적인 Intel/AMD Windows용 x64 설치 파일
+- `npm run build:win:arm64`: Windows ARM 기기용 설치 파일
 
 ### 기타 스크립트
 
