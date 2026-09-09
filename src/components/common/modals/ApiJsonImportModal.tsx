@@ -18,6 +18,7 @@ export interface ApiJsonImportConfirmPayload {
   description: string;
   editorType: ApiResponseEditorTypeKey;
   configuration: string;
+  queryParams?: Record<string, string>;
 }
 
 export interface ApiJsonImportModalProps {
@@ -34,6 +35,7 @@ export default function ApiJsonImportModal({ isOpen, onClose, onConfirm, default
   const [description, setDescription] = useState("");
   const [responseType, setResponseType] = useState<(typeof API_RESPONSE_TYPE_OPTIONS)[number]>(API_RESPONSE_TYPE_OPTIONS[0]);
   const [raw, setRaw] = useState("");
+  const [queryParams, setQueryParams] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -43,6 +45,7 @@ export default function ApiJsonImportModal({ isOpen, onClose, onConfirm, default
     setDescription("");
     setResponseType(API_RESPONSE_TYPE_OPTIONS[0]);
     setRaw("");
+    setQueryParams({});
     setError(null);
     setBusy(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -53,6 +56,7 @@ export default function ApiJsonImportModal({ isOpen, onClose, onConfirm, default
     setDescription("");
     setResponseType(API_RESPONSE_TYPE_OPTIONS[0]);
     setRaw("");
+    setQueryParams({});
     setError(null);
     setBusy(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -73,6 +77,7 @@ export default function ApiJsonImportModal({ isOpen, onClose, onConfirm, default
       setDescription(inner.description);
       setResponseType(API_RESPONSE_TYPE_OPTIONS.find((x) => x.type === inner.editorType) ?? API_RESPONSE_TYPE_OPTIONS[0]);
       setRaw(inner.configuration);
+      setQueryParams(inner.queryParams);
       setError(null);
       return;
     }
@@ -125,7 +130,7 @@ export default function ApiJsonImportModal({ isOpen, onClose, onConfirm, default
         editorType = responseType.type;
       }
 
-      await onConfirm({ label, description: desc, editorType, configuration });
+      await onConfirm({ label, description: desc, editorType, configuration, queryParams });
       reset();
       onClose();
     } catch (e) {

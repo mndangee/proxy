@@ -359,6 +359,8 @@ export interface SavedApiResponseRow {
   description: string;
   editorType: SavedApiResponseEditorType;
   configuration: string;
+  /** 이 응답을 선택할 URL 쿼리 조건. 모든 키와 값이 일치해야 합니다. */
+  queryParams?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -379,6 +381,9 @@ interface ProjectsDiskApi {
   export: (folderName: string) => Promise<unknown>;
   exportZip: (folderName: string) => Promise<unknown>;
   import: () => Promise<unknown>;
+  analyzeImport: () => Promise<unknown>;
+  executeImport: (sessionId: string) => Promise<unknown>;
+  cancelImport: (sessionId: string) => Promise<unknown>;
   migrateFromLegacy: (legacy: unknown[]) => Promise<unknown>;
   getRootPath: () => Promise<unknown>;
   deleteFolder: (folderName: string) => Promise<unknown>;
@@ -397,6 +402,7 @@ interface ProjectsDiskApi {
       description: string;
       editorType: string;
       configuration: string;
+      queryParams?: Record<string, string>;
     },
   ) => Promise<unknown>;
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<unknown>;
@@ -407,6 +413,11 @@ interface ProjectsDiskApi {
     | { ok: false; error: string; errors?: string[] }
   >;
   getAppProxyConfig: () => Promise<unknown>;
+  pickServerDirectory: () => Promise<unknown>;
+  detectServerCommand: (workdir: string) => Promise<unknown>;
+  prepareProxyTakeover: (payload: { clientPort: number; upstreamPort: number; workdir: string; command: string; confirmed?: boolean }) => Promise<unknown>;
+  restoreProxyTakeover: (payload: { clientPort: number; workdir: string; command: string }) => Promise<unknown>;
+  restoreActiveProxyTakeover: () => Promise<unknown>;
   setAppProxyConfig: (partial: {
     proxyServer?: {
       port?: number;
@@ -434,9 +445,12 @@ interface ProjectsDiskApi {
     mockProfile?: MockProfileType;
     mockApiLatencyMs?: Record<string, number> | null;
     mockActiveApiResponses?: Record<string, MockActiveApiResponseRef> | null;
-  }) => Promise<unknown>;
+  }) => Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }>;
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<unknown>;
   getMockProxyStatus: () => Promise<unknown>;
+  getProxyDiagnostics: () => Promise<unknown>;
+  getRecentProxyRequests: () => Promise<unknown>;
+  clearRecentProxyRequests: () => Promise<unknown>;
 }
 
 function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
@@ -449,6 +463,9 @@ function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
     typeof p.export === "function" &&
     typeof p.exportZip === "function" &&
     typeof p.import === "function" &&
+    typeof p.analyzeImport === "function" &&
+    typeof p.executeImport === "function" &&
+    typeof p.cancelImport === "function" &&
     typeof p.migrateFromLegacy === "function" &&
     typeof p.getRootPath === "function" &&
     typeof p.deleteFolder === "function" &&
@@ -482,6 +499,9 @@ function getProjectsApi(): ProjectsDiskApi | null {
     export: (folderName) => ipc.invoke("project-fs:export", folderName),
     exportZip: (folderName) => ipc.invoke("project-fs:exportZip", folderName),
     import: () => ipc.invoke("project-fs:import"),
+    analyzeImport: () => ipc.invoke("project-fs:analyzeImport"),
+    executeImport: (sessionId) => ipc.invoke("project-fs:executeImport", sessionId),
+    cancelImport: (sessionId) => ipc.invoke("project-fs:cancelImport", sessionId),
     migrateFromLegacy: (legacy) => ipc.invoke("project-fs:migrateFromLegacy", legacy),
     getRootPath: () => ipc.invoke("project-fs:getRootPath"),
     deleteFolder: (folderName) => ipc.invoke("project-fs:delete", folderName),
@@ -496,9 +516,17 @@ function getProjectsApi(): ProjectsDiskApi | null {
     deleteApiResponse: (folderName, apiName, responseValue) => ipc.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
     importApisJsonPick: (folderName) => ipc.invoke("project-fs:importApisJsonPick", folderName),
     getAppProxyConfig: () => ipc.invoke("project-fs:getAppProxyConfig"),
+    pickServerDirectory: () => ipc.invoke("project-fs:pickServerDirectory"),
+    detectServerCommand: (workdir) => ipc.invoke("project-fs:detectServerCommand", workdir),
+    prepareProxyTakeover: (payload) => ipc.invoke("project-fs:prepareProxyTakeover", payload),
+    restoreProxyTakeover: (payload) => ipc.invoke("project-fs:restoreProxyTakeover", payload),
+    restoreActiveProxyTakeover: () => ipc.invoke("project-fs:restoreActiveProxyTakeover"),
     setAppProxyConfig: (partial) => ipc.invoke("project-fs:setAppProxyConfig", partial),
     setLinkedClients: (payload) => ipc.invoke("project-fs:setLinkedClients", payload),
     getMockProxyStatus: () => ipc.invoke("mock-proxy:status"),
+    getProxyDiagnostics: () => ipc.invoke("mock-proxy:diagnostics"),
+    getRecentProxyRequests: () => ipc.invoke("mock-proxy:recentRequests"),
+    clearRecentProxyRequests: () => ipc.invoke("mock-proxy:clearRecentRequests"),
   };
 }
 
@@ -774,6 +802,17 @@ function newSavedResponseRowId(): string {
   return `saved-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function coerceResponseQueryParams(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = key.trim();
+    if (!k || typeof value !== "string") continue;
+    out[k] = value;
+  }
+  return out;
+}
+
 function coerceSavedResponseRow(o: unknown): SavedApiResponseRow | null {
   if (!o || typeof o !== "object") return null;
   const r = o as Record<string, unknown>;
@@ -781,6 +820,7 @@ function coerceSavedResponseRow(o: unknown): SavedApiResponseRow | null {
   const ed = String(r.editorType ?? "default").toLowerCase();
   const editorType: SavedApiResponseEditorType = ed === "test" ? "test" : ed === "error" ? "error" : "default";
   const v = r.value;
+  const queryParams = coerceResponseQueryParams(r.queryParams);
   return {
     id: typeof r.id === "string" ? r.id : v,
     value: v,
@@ -788,6 +828,7 @@ function coerceSavedResponseRow(o: unknown): SavedApiResponseRow | null {
     description: typeof r.description === "string" ? r.description : "",
     editorType,
     configuration: r.configuration,
+    ...(Object.keys(queryParams).length ? { queryParams } : {}),
     createdAt: typeof r.createdAt === "string" ? r.createdAt : new Date().toISOString(),
     updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : new Date().toISOString(),
   };
@@ -847,6 +888,13 @@ export function getSavedApiResponsesForApi(apiName: string): SavedApiResponseRow
   const project = getProjectForApiName(key);
   if (!project) return [];
   return savedResponsesCache[project.id]?.[key] ?? [];
+}
+
+/** 프로젝트가 이미 정해진 목록 화면에서 API 이름 중복 없이 응답을 조회합니다. */
+export function getSavedApiResponsesForProjectApi(projectId: string, apiName: string): SavedApiResponseRow[] {
+  const key = apiName.trim();
+  if (!projectId.trim() || !key) return [];
+  return savedResponsesCache[projectId]?.[key] ?? [];
 }
 
 function parseActivityTimeMs(isoLike: string | undefined): number {
@@ -967,6 +1015,7 @@ export async function upsertSavedApiResponse(
     description: string;
     editorType: SavedApiResponseEditorType;
     configuration: string;
+    queryParams?: Record<string, string>;
   },
 ): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
@@ -994,6 +1043,7 @@ export async function upsertSavedApiResponse(
           description: input.description.trim(),
           editorType: input.editorType,
           configuration: input.configuration,
+          queryParams: input.queryParams,
           updatedAt: now,
         };
         outValue = list[idx].value;
@@ -1006,6 +1056,7 @@ export async function upsertSavedApiResponse(
           description: input.description.trim(),
           editorType: input.editorType,
           configuration: input.configuration,
+          queryParams: input.queryParams,
           createdAt: now,
           updatedAt: now,
         });
@@ -1019,6 +1070,7 @@ export async function upsertSavedApiResponse(
         description: input.description.trim(),
         editorType: input.editorType,
         configuration: input.configuration,
+        queryParams: input.queryParams,
         createdAt: now,
         updatedAt: now,
       });
@@ -1042,6 +1094,7 @@ export async function upsertSavedApiResponse(
       description: input.description.trim(),
       editorType: input.editorType,
       configuration: input.configuration,
+      queryParams: input.queryParams,
     });
     const res = raw as { ok?: boolean; value?: string; error?: string };
     if (!res.ok) {
@@ -1511,6 +1564,40 @@ export type MockProxyStatus = {
   careMockSpawn?: { running: boolean; lastError?: string };
 };
 
+export type ProxyDiagnosticState = "healthy" | "checking" | "error" | "inactive";
+export type ProxyDiagnosticStep = {
+  state: ProxyDiagnosticState;
+  title: string;
+  detail: string;
+  port?: number;
+  solution?: string;
+};
+export type ProxyDiagnostics = {
+  overall: ProxyDiagnosticState;
+  summary: string;
+  steps: {
+    requestConnection: ProxyDiagnosticStep;
+    dummyServer: ProxyDiagnosticStep;
+    projectServer: ProxyDiagnosticStep;
+    autoRestore: ProxyDiagnosticStep;
+  };
+};
+export type ProxyRequestRecord = {
+  id: string;
+  timestamp: string;
+  method: string;
+  path: string;
+  result: "mock" | "upstream" | "error";
+  statusCode: number;
+  durationMs: number;
+  tranId?: string;
+  responseLabel?: string;
+  apiName?: string;
+  responseValue?: string;
+  editorType?: "default" | "test" | "error";
+  error?: string;
+};
+
 /** Electron 전용 — 브라우저 단독 실행 시 null */
 export async function getMockProxyStatus(): Promise<MockProxyStatus | null> {
   if (typeof window === "undefined") return null;
@@ -1533,6 +1620,64 @@ export async function getMockProxyStatus(): Promise<MockProxyStatus | null> {
   return null;
 }
 
+export async function getProxyDiagnostics(): Promise<ProxyDiagnostics | null> {
+  if (typeof window === "undefined") return null;
+  const disk = window.api?.projects as { getProxyDiagnostics?: () => Promise<ProxyDiagnostics> } | undefined;
+  if (disk && typeof disk.getProxyDiagnostics === "function") {
+    try {
+      return await disk.getProxyDiagnostics();
+    } catch {
+      return null;
+    }
+  }
+  const ipc = window.electron?.ipcRenderer;
+  if (!ipc || typeof ipc.invoke !== "function") return null;
+  try {
+    return await ipc.invoke("mock-proxy:diagnostics") as ProxyDiagnostics;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRecentProxyRequests(): Promise<ProxyRequestRecord[]> {
+  if (typeof window === "undefined") return [];
+  const disk = window.api?.projects as { getRecentProxyRequests?: () => Promise<ProxyRequestRecord[]> } | undefined;
+  if (disk && typeof disk.getRecentProxyRequests === "function") {
+    try {
+      return await disk.getRecentProxyRequests();
+    } catch {
+      return [];
+    }
+  }
+  const ipc = window.electron?.ipcRenderer;
+  if (!ipc || typeof ipc.invoke !== "function") return [];
+  try {
+    return await ipc.invoke("mock-proxy:recentRequests") as ProxyRequestRecord[];
+  } catch {
+    return [];
+  }
+}
+
+export async function clearRecentProxyRequests(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const disk = window.api?.projects as { clearRecentProxyRequests?: () => Promise<{ ok: boolean }> } | undefined;
+  if (disk && typeof disk.clearRecentProxyRequests === "function") {
+    try {
+      return Boolean((await disk.clearRecentProxyRequests()).ok);
+    } catch {
+      return false;
+    }
+  }
+  const ipc = window.electron?.ipcRenderer;
+  if (!ipc || typeof ipc.invoke !== "function") return false;
+  try {
+    const result = await ipc.invoke("mock-proxy:clearRecentRequests") as { ok?: boolean };
+    return Boolean(result?.ok);
+  } catch {
+    return false;
+  }
+}
+
 export async function getAppProxyConfig(): Promise<AppProxyConfig> {
   const disk = getProjectsApi();
   if (disk && typeof disk.getAppProxyConfig === "function") {
@@ -1543,6 +1688,58 @@ export async function getAppProxyConfig(): Promise<AppProxyConfig> {
     }
   }
   return readBrowserAppProxyConfig();
+}
+
+export async function pickServerDirectory(): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "desktop-only" };
+  return await disk.pickServerDirectory() as { ok: true; path: string } | { ok: false; error: string };
+}
+
+export async function detectServerCommand(workdir: string): Promise<
+  { ok: true; command: string; script: string; packageManager: string } | { ok: false; error: string }
+> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "desktop-only" };
+  return await disk.detectServerCommand(workdir) as
+    | { ok: true; command: string; script: string; packageManager: string }
+    | { ok: false; error: string };
+}
+
+export async function prepareProxyTakeover(
+  clientPort: number,
+  upstreamPort: number,
+  workdir: string,
+  command: string,
+  confirmed = false,
+): Promise<{ ok: true; stopped: number[] } | { ok: false; error: string; port?: number; detail?: string }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "desktop-only" };
+  return await disk.prepareProxyTakeover({ clientPort, upstreamPort, workdir, command, confirmed }) as
+    | { ok: true; stopped: number[] }
+    | { ok: false; error: string; port?: number; detail?: string };
+}
+
+export async function restoreActiveProxyTakeover(): Promise<
+  { ok: true; restored: boolean } | { ok: false; error: string }
+> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "desktop-only" };
+  return await disk.restoreActiveProxyTakeover() as
+    | { ok: true; restored: boolean }
+    | { ok: false; error: string };
+}
+
+export async function restoreProxyTakeover(
+  clientPort: number,
+  workdir: string,
+  command: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "desktop-only" };
+  return await disk.restoreProxyTakeover({ clientPort, workdir, command }) as
+    | { ok: true }
+    | { ok: false; error: string };
 }
 
 export async function setAppProxyConfig(
@@ -1921,15 +2118,78 @@ export async function updateProjectFavorite(projectId: string, isFavorite: boole
   notifyProjectsChanged();
 }
 
-export async function importSharedProject(): Promise<{ ok: boolean; error?: string }> {
+export type ProjectImportSummary = {
+  detectedFormat: "dataforge-project" | "server-dump" | "grouped-json" | "plain-json";
+  apiCount: number;
+  responseCount: number;
+  skippedFileCount: number;
+};
+
+export type ProjectImportAnalysis = {
+  sessionId: string;
+  detectedFormat: "dataforge-project" | "server-dump" | "grouped-json" | "plain-json";
+  projectName: string;
+  apiCount: number;
+  responseCount: number;
+  defaultCount: number;
+  testCount: number;
+  errorCount: number;
+  skippedFileCount: number;
+};
+
+export async function analyzeSharedProjectImport(): Promise<
+  { ok: true; analysis: ProjectImportAnalysis } | { ok: false; error: string }
+> {
   const disk = getProjectsApi();
   if (!disk) return { ok: false, error: "electron-only" };
-  const res = (await disk.import()) as { ok: boolean; error?: string };
+  try {
+    const raw = (await disk.analyzeImport()) as { ok?: boolean; analysis?: ProjectImportAnalysis; error?: string };
+    if (!raw.ok || !raw.analysis) return { ok: false, error: raw.error ?? "import-analysis-failed" };
+    return { ok: true, analysis: raw.analysis };
+  } catch {
+    // Electron 메인 프로세스가 이전 코드로 실행 중이면 새 IPC 핸들러가 아직 없다.
+    return { ok: false, error: "app-restart-required" };
+  }
+}
+
+export async function executeSharedProjectImport(
+  sessionId: string,
+): Promise<{ ok: true; project: Project; summary?: ProjectImportSummary } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "electron-only" };
+  try {
+    const raw = (await disk.executeImport(sessionId)) as {
+      ok?: boolean;
+      project?: ManifestLike;
+      summary?: ProjectImportSummary;
+      error?: string;
+    };
+    if (!raw.ok || !raw.project) return { ok: false, error: raw.error ?? "import-failed" };
+    const project = manifestToProject(raw.project);
+    projectsCache = ((await disk.list()) as unknown[]).map((m) => manifestToProject(m as ManifestLike));
+    notifyProjectsChanged();
+    await refreshAllProjectApisFromDisk();
+    return { ok: true, project, summary: raw.summary };
+  } catch {
+    return { ok: false, error: "app-restart-required" };
+  }
+}
+
+export async function cancelSharedProjectImport(sessionId: string): Promise<void> {
+  const disk = getProjectsApi();
+  if (!disk) return;
+  await disk.cancelImport(sessionId).catch(() => {});
+}
+
+export async function importSharedProject(): Promise<{ ok: boolean; error?: string; summary?: ProjectImportSummary }> {
+  const disk = getProjectsApi();
+  if (!disk) return { ok: false, error: "electron-only" };
+  const res = (await disk.import()) as { ok: boolean; error?: string; summary?: ProjectImportSummary };
   if (!res.ok) return { ok: false, error: res.error };
   projectsCache = ((await disk.list()) as unknown[]).map((m) => manifestToProject(m as ManifestLike));
   notifyProjectsChanged();
   await refreshAllProjectApisFromDisk();
-  return { ok: true };
+  return { ok: true, summary: res.summary };
 }
 
 /** Electron: JSON 파일 선택 → 파일명(확장자 제외)=API 이름, 본문=저장 응답 (여러 개 선택 가능) */
@@ -2151,7 +2411,7 @@ export async function persistMockActiveApiResponse(
   apiName: string,
   active: MockActiveApiResponseRef | null,
   options?: { alsoKeys?: string[] },
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const keys = new Set<string>();
   const primary = apiName.trim();
   if (primary) keys.add(primary);
@@ -2159,7 +2419,7 @@ export async function persistMockActiveApiResponse(
     const t = alt.trim();
     if (t) keys.add(t);
   }
-  if (keys.size === 0) return;
+  if (keys.size === 0) return { ok: false, error: "empty-api-name" };
 
   const buildMerged = (cur: Record<string, MockActiveApiResponseRef>) => {
     const merged = { ...cur };
@@ -2177,16 +2437,19 @@ export async function persistMockActiveApiResponse(
     try {
       const cur = await getAppProxyConfig();
       const merged = buildMerged(cur.mockActiveApiResponses ?? {});
-      await disk.setAppProxyConfig({ mockActiveApiResponses: merged });
+      const raw = await disk.setAppProxyConfig({ mockActiveApiResponses: merged });
+      const result = raw as { ok?: boolean; error?: string };
+      if (!result.ok) return { ok: false, error: result.error ?? "save-failed" };
       const browserCur = readBrowserAppProxyConfig();
       writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: merged });
-    } catch {
-      const browserCur = readBrowserAppProxyConfig();
-      writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}) });
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "save-failed" };
     }
   } else {
     const browserCur = readBrowserAppProxyConfig();
     writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}) });
+    return { ok: true };
   }
 }
 

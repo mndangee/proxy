@@ -55,10 +55,10 @@ export default function ConfirmModal({
         {title ? <h2 className="typo-title-3 text-label-normal w-full font-bold">{title}</h2> : null}
         <div className={`typo-body-2-normal text-label-neutral w-full ${title ? "mt-3" : ""}`}>{message}</div>
         <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-3">
-          <Btn category="secondary" variant width={100} disabled={busy} onClick={onClose}>
+          <Btn category="secondary" variant width={128} disabled={busy} onClick={onClose}>
             {cancelLabel}
           </Btn>
-          <Btn category="primary" width={100} disabled={busy} onClick={handleConfirm}>
+          <Btn category="primary" width={128} disabled={busy} onClick={handleConfirm}>
             {confirmLabel}
           </Btn>
         </div>

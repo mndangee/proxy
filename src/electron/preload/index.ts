@@ -10,6 +10,9 @@ const projects = {
   export: (folderName: string) => ipcRenderer.invoke("project-fs:export", folderName),
   exportZip: (folderName: string) => ipcRenderer.invoke("project-fs:exportZip", folderName),
   import: () => ipcRenderer.invoke("project-fs:import"),
+  analyzeImport: () => ipcRenderer.invoke("project-fs:analyzeImport"),
+  executeImport: (sessionId: string) => ipcRenderer.invoke("project-fs:executeImport", sessionId),
+  cancelImport: (sessionId: string) => ipcRenderer.invoke("project-fs:cancelImport", sessionId),
   migrateFromLegacy: (legacy: unknown[]) => ipcRenderer.invoke("project-fs:migrateFromLegacy", legacy),
   getRootPath: () => ipcRenderer.invoke("project-fs:getRootPath"),
   deleteFolder: (folderName: string) => ipcRenderer.invoke("project-fs:delete", folderName),
@@ -21,10 +24,15 @@ const projects = {
     ipcRenderer.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
   deleteApi: (folderName: string, apiId: string) => ipcRenderer.invoke("project-fs:deleteApi", folderName, apiId),
   getResponsesStore: (folderName: string) => ipcRenderer.invoke("project-fs:getResponsesStore", folderName),
-  upsertApiResponse: (folderName: string, apiName: string, payload: { value: string | null; label: string; description: string; editorType: string; configuration: string }) =>
+  upsertApiResponse: (folderName: string, apiName: string, payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string> }) =>
     ipcRenderer.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => ipcRenderer.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
   getAppProxyConfig: () => ipcRenderer.invoke("project-fs:getAppProxyConfig"),
+  pickServerDirectory: () => ipcRenderer.invoke("project-fs:pickServerDirectory"),
+  detectServerCommand: (workdir: string) => ipcRenderer.invoke("project-fs:detectServerCommand", workdir),
+  prepareProxyTakeover: (payload: { clientPort: number; upstreamPort: number; workdir: string; command: string; confirmed?: boolean }) => ipcRenderer.invoke("project-fs:prepareProxyTakeover", payload),
+  restoreProxyTakeover: (payload: { clientPort: number; workdir: string; command: string }) => ipcRenderer.invoke("project-fs:restoreProxyTakeover", payload),
+  restoreActiveProxyTakeover: () => ipcRenderer.invoke("project-fs:restoreActiveProxyTakeover"),
   setAppProxyConfig: (partial: {
     proxyServer?: {
       port?: number;
@@ -53,6 +61,9 @@ const projects = {
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) =>
     ipcRenderer.invoke("project-fs:setLinkedClients", payload),
   getMockProxyStatus: () => ipcRenderer.invoke("mock-proxy:status"),
+  getProxyDiagnostics: () => ipcRenderer.invoke("mock-proxy:diagnostics"),
+  getRecentProxyRequests: () => ipcRenderer.invoke("mock-proxy:recentRequests"),
+  clearRecentProxyRequests: () => ipcRenderer.invoke("mock-proxy:clearRecentRequests"),
   importApisJsonPick: (folderName: string) => ipcRenderer.invoke("project-fs:importApisJsonPick", folderName),
 };
 

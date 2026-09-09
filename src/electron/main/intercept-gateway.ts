@@ -1,5 +1,9 @@
 import http from "node:http";
 import { request as httpRequest } from "node:http";
+import { promises as fs } from "node:fs";
+import { join } from "node:path";
+
+import { app } from "electron";
 
 import { applyUpstreamSpawnFromConfig, stopUpstreamSpawn } from "./upstream-spawn";
 import {
@@ -14,6 +18,196 @@ let gatewayListenPort: number | null = null;
 let gatewayLastError: string | undefined;
 
 export type InterceptGatewayStatus = { listening: boolean; port: number | null; lastError?: string };
+export type ProxyRequestRecord = {
+  id: string;
+  timestamp: string;
+  method: string;
+  path: string;
+  result: "mock" | "upstream" | "error";
+  statusCode: number;
+  durationMs: number;
+  tranId?: string;
+  responseLabel?: string;
+  apiName?: string;
+  responseValue?: string;
+  editorType?: "default" | "test" | "error";
+  error?: string;
+};
+
+const recentRequests: ProxyRequestRecord[] = [];
+const RECENT_REQUEST_LIMIT = 100;
+const RECENT_REQUEST_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+let requestSequence = 0;
+let historyFilePath: string | null = null;
+let historyWriteQueue: Promise<void> = Promise.resolve();
+
+function isProxyRequestRecord(value: unknown): value is ProxyRequestRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Partial<ProxyRequestRecord>;
+  return typeof row.id === "string"
+    && typeof row.timestamp === "string"
+    && typeof row.method === "string"
+    && typeof row.path === "string"
+    && (row.result === "mock" || row.result === "upstream" || row.result === "error")
+    && typeof row.statusCode === "number"
+    && typeof row.durationMs === "number";
+}
+
+function pruneRecentRequests(requests: ProxyRequestRecord[], now = Date.now()): ProxyRequestRecord[] {
+  const oldestAllowed = now - RECENT_REQUEST_RETENTION_MS;
+  return requests
+    .filter((request) => {
+      const timestamp = new Date(request.timestamp).getTime();
+      return Number.isFinite(timestamp) && timestamp >= oldestAllowed;
+    })
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, RECENT_REQUEST_LIMIT);
+}
+
+function queueRecentRequestHistoryWrite(): void {
+  if (!historyFilePath) return;
+  const filePath = historyFilePath;
+  const snapshot = JSON.stringify({ version: 1, requests: recentRequests }, null, 2);
+  historyWriteQueue = historyWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const temporaryPath = `${filePath}.tmp`;
+      await fs.writeFile(temporaryPath, snapshot, "utf8");
+      await fs.rename(temporaryPath, filePath);
+    })
+    .catch((error: unknown) => {
+      console.error("[recent-requests] failed to save request history:", error);
+    });
+}
+
+export async function initializeProxyRequestHistory(): Promise<void> {
+  historyFilePath = join(app.getPath("userData"), "recent-proxy-requests.json");
+  try {
+    const raw = await fs.readFile(historyFilePath, "utf8");
+    const parsed = JSON.parse(raw) as { version?: unknown; requests?: unknown };
+    if (!Array.isArray(parsed.requests)) return;
+    const valid = parsed.requests.filter(isProxyRequestRecord);
+    const restored = pruneRecentRequests(valid);
+    recentRequests.splice(0, recentRequests.length, ...restored);
+    if (restored.length !== parsed.requests.length) queueRecentRequestHistoryWrite();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    if (code !== "ENOENT") console.error("[recent-requests] failed to load request history:", error);
+  }
+}
+
+export async function flushProxyRequestHistory(): Promise<void> {
+  await historyWriteQueue;
+}
+
+function isPostApiRequest(req: http.IncomingMessage): boolean {
+  if ((req.method ?? "GET").toUpperCase() !== "POST") return false;
+  try {
+    return new URL(req.url ?? "/", "http://127.0.0.1").pathname === "/api";
+  } catch {
+    return (req.url ?? "/").split("?", 1)[0] === "/api";
+  }
+}
+
+function recordRequest(
+  req: http.IncomingMessage,
+  startedAt: number,
+  data: Omit<ProxyRequestRecord, "id" | "timestamp" | "method" | "path" | "durationMs">,
+): void {
+  if (!isPostApiRequest(req)) return;
+  requestSequence += 1;
+  recentRequests.unshift({
+    id: `${Date.now()}-${requestSequence}`,
+    timestamp: new Date().toISOString(),
+    method: (req.method ?? "GET").toUpperCase(),
+    path: req.url ?? "/",
+    durationMs: Math.max(0, Date.now() - startedAt),
+    ...data,
+  });
+  const pruned = pruneRecentRequests(recentRequests);
+  recentRequests.splice(0, recentRequests.length, ...pruned);
+  queueRecentRequestHistoryWrite();
+}
+
+export function getRecentProxyRequests(): ProxyRequestRecord[] {
+  return recentRequests.slice(0, RECENT_REQUEST_LIMIT);
+}
+
+export async function clearRecentProxyRequests(): Promise<void> {
+  recentRequests.splice(0, recentRequests.length);
+  queueRecentRequestHistoryWrite();
+  await flushProxyRequestHistory();
+}
+
+function tranIdFromValue(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const direct = typeof row.tranId === "string" ? row.tranId.trim() : "";
+  if (direct) return direct;
+  for (const key of ["header", "requestMessage", "request", "data"]) {
+    let nested = row[key];
+    if (typeof nested === "string") {
+      try { nested = JSON.parse(nested) as unknown; } catch { continue; }
+    }
+    const found = tranIdFromValue(nested);
+    if (found) return found;
+  }
+  return null;
+}
+
+function extractTranId(req: http.IncomingMessage, body: Buffer): string | undefined {
+  const headerValue = req.headers["x-tran-id"] ?? req.headers["tranid"];
+  const headerTranId = Array.isArray(headerValue) ? headerValue[0]?.trim() : headerValue?.trim();
+  if (headerTranId) return headerTranId;
+  const careHeaderValue = req.headers["header"];
+  const careHeader = Array.isArray(careHeaderValue) ? careHeaderValue[0] : careHeaderValue;
+  if (careHeader) {
+    try {
+      const found = tranIdFromValue(JSON.parse(careHeader) as unknown);
+      if (found) return found;
+    } catch {
+      // 일반 HTTP 헤더라면 다른 위치도 계속 확인한다.
+    }
+  }
+  try {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const fromQuery = url.searchParams.get("tranId")?.trim();
+    if (fromQuery) return fromQuery;
+    const fromPath = /^\/vd\/data\/([^/]+?)\.do$/i.exec(url.pathname)?.[1]?.trim();
+    if (fromPath) return fromPath;
+  } catch {
+    // 본문 확인을 계속한다.
+  }
+  const raw = body.toString("utf8").trim();
+  if (!raw) return undefined;
+  try {
+    const found = tranIdFromValue(JSON.parse(raw) as unknown);
+    if (found) return found;
+  } catch {
+    // form-urlencoded 형식도 확인한다.
+  }
+  try {
+    const params = new URLSearchParams(raw);
+    const direct = params.get("tranId")?.trim();
+    if (direct) return direct;
+    const header = params.get("header");
+    if (header) return tranIdFromValue(JSON.parse(header) as unknown) ?? undefined;
+  } catch {
+    // 알 수 없는 본문 형식은 기록에서 생략한다.
+  }
+  const contentType = typeof req.headers["content-type"] === "string" ? req.headers["content-type"] : "";
+  if (contentType.toLowerCase().includes("multipart/form-data")) {
+    const headerPart = /name=["']header["'][^\r\n]*\r?\n(?:[^\r\n]*\r?\n)*?\r?\n([^\r\n]+)/i.exec(raw)?.[1]?.trim();
+    if (headerPart) {
+      try {
+        return tranIdFromValue(JSON.parse(headerPart) as unknown) ?? undefined;
+      } catch {
+        // 손상되거나 알 수 없는 multipart 값은 생략한다.
+      }
+    }
+  }
+  return undefined;
+}
 
 export function getInterceptGatewayStatus(): InterceptGatewayStatus {
   return {
@@ -34,112 +228,50 @@ export async function stopInterceptGatewayServer(): Promise<void> {
   });
 }
 
-function tranIdFromPath(pathname: string): string | null {
-  const m = pathname.match(/\/([A-Za-z0-9_.-]+)\.do\/?$/i);
-  if (!m?.[1]) return null;
-  return m[1].trim() || null;
-}
+type MockServerResponse = {
+  statusCode: number;
+  headers: http.IncomingHttpHeaders;
+  body: Buffer;
+};
 
-/** Care `Sfd.server._callServerModule`: `header={...}&body=encodeURIComponent(JSON)` — Content-Type이 비어 있어도 흔함 */
-function looksLikeCareFormUrlEncoded(rawBody: string, contentType: string): boolean {
-  const ct = (contentType || "").toLowerCase();
-  if (ct.includes("application/json")) return false;
-  const s = rawBody.trimStart();
-  return s.startsWith("header=") && /(^|&)body=/.test(rawBody);
-}
-
-/** x-www-form-urlencoded(JSON header) / JSON body — Care류·유사 API 공통 */
-function tranIdFromGatewayBody(rawBody: string, contentType: string): string | null {
-  const ct = (contentType || "").toLowerCase();
-  try {
-    if (ct.includes("application/x-www-form-urlencoded") || looksLikeCareFormUrlEncoded(rawBody, contentType)) {
-      const params = new URLSearchParams(rawBody);
-      const h = params.get("header");
-      if (h) {
-        const header = JSON.parse(h) as { tranId?: string };
-        const t = header?.tranId != null ? String(header.tranId).trim() : "";
-        return t || null;
-      }
-    } else if (ct.includes("application/json")) {
-      const j = JSON.parse(rawBody) as { header?: string | { tranId?: string } };
-      if (j && typeof j === "object") {
-        const hdr = typeof j.header === "string" ? (JSON.parse(j.header) as { tranId?: string }) : j.header;
-        const t = hdr?.tranId != null ? String(hdr.tranId).trim() : "";
-        return t || null;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-function mergeTranId(pathname: string, rawBody: string, contentType: string): string | null {
-  return tranIdFromPath(pathname) ?? tranIdFromGatewayBody(rawBody, contentType);
-}
-
-function toEnvelopeBodyValue(data: unknown): unknown {
-  if (data === null || data === undefined) return "";
-  return data;
-}
-
-/** 일부 레거시 클라이언트는 responseMessage.body를 JSON 문자열로 둠 */
-function wrapEnvelopeResponse(tranID: string, data: unknown): string {
-  if (data != null && typeof data === "object" && !Array.isArray(data) && "responseMessage" in data) {
-    const rm = data as { responseMessage?: { body?: unknown } };
-    const innerBody = rm.responseMessage?.body;
-    if (innerBody !== undefined && innerBody !== null && typeof innerBody === "object") {
-      const fixed = {
-        ...(data as Record<string, unknown>),
-        responseMessage: {
-          ...(rm.responseMessage as object),
-          body: toEnvelopeBodyValue(innerBody),
-        },
-      };
-      return JSON.stringify(fixed);
-    }
-    return JSON.stringify(data);
-  }
-  return JSON.stringify({
-    responseMessage: {
-      header: { tranId: tranID },
-      body: toEnvelopeBodyValue(data),
-    },
-  });
-}
-
-function fetchMockJson(tranId: string, mockPort: number): Promise<{ ok: true; json: unknown } | { ok: false }> {
-  const path = `/mock/${encodeURIComponent(tranId)}`;
+/** 원 요청을 모의 서버에 그대로 전달해 mock profile별 키 추출과 응답 포맷을 한곳에서 처리합니다. */
+function fetchMockResponse(
+  clientReq: http.IncomingMessage,
+  body: Buffer,
+  mockPort: number,
+): Promise<MockServerResponse | null> {
+  const headers = { ...clientReq.headers } as Record<string, string | string[] | undefined>;
+  headers.host = `127.0.0.1:${mockPort}`;
   return new Promise((resolve) => {
     const req = httpRequest(
-      { hostname: "127.0.0.1", port: mockPort, path, method: "GET", headers: { Connection: "close" } },
+      {
+        hostname: "127.0.0.1",
+        port: mockPort,
+        path: clientReq.url ?? "/",
+        method: clientReq.method,
+        headers,
+      },
       (pres) => {
         const chunks: Buffer[] = [];
         pres.on("data", (c) => chunks.push(Buffer.from(c)));
         pres.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          if (pres.statusCode !== 200) {
-            resolve({ ok: false });
-            return;
-          }
-          try {
-            resolve({ ok: true, json: JSON.parse(text) as unknown });
-          } catch {
-            resolve({ ok: false });
-          }
+          resolve({
+            statusCode: pres.statusCode ?? 502,
+            headers: pres.headers,
+            body: Buffer.concat(chunks),
+          });
         });
       },
     );
-    req.on("error", () => resolve({ ok: false }));
+    req.on("error", () => resolve(null));
+    if (body.length > 0) req.write(body);
     req.end();
   });
 }
 
-function shouldTryMock(method: string, pathname: string): boolean {
+function shouldTryMock(method: string): boolean {
   const m = method.toUpperCase();
-  if (m !== "GET" && m !== "POST" && m !== "PUT" && m !== "PATCH") return false;
-  if (pathname === "/api" || pathname.startsWith("/api/")) return true;
-  return /^\/vd\/data\/[a-zA-Z0-9_.-]+\.do$/i.test(pathname);
+  return m === "GET" || m === "POST" || m === "PUT" || m === "PATCH" || m === "DELETE";
 }
 
 function forwardToUpstream(
@@ -147,6 +279,8 @@ function forwardToUpstream(
   clientRes: http.ServerResponse,
   body: Buffer,
   upstreamPort: number,
+  startedAt: number,
+  tranId?: string,
 ): void {
   const headers = { ...clientReq.headers } as Record<string, string | string[] | undefined>;
   headers.host = `127.0.0.1:${upstreamPort}`;
@@ -163,11 +297,13 @@ function forwardToUpstream(
       headers,
     },
     (pres) => {
+      recordRequest(clientReq, startedAt, { result: "upstream", statusCode: pres.statusCode ?? 502, ...(tranId ? { tranId } : {}) });
       clientRes.writeHead(pres.statusCode ?? 502, pres.headers);
       pres.pipe(clientRes);
     },
   );
   p.on("error", (err) => {
+    recordRequest(clientReq, startedAt, { result: "error", statusCode: 502, error: err?.message ?? "프로젝트 서버에 연결할 수 없습니다.", ...(tranId ? { tranId } : {}) });
     clientRes.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
     clientRes.end(err?.message ?? "upstream unreachable");
   });
@@ -182,14 +318,7 @@ async function handleInterceptClient(
   mockPort: number,
   upstreamPort: number,
 ): Promise<void> {
-  const urlRaw = clientReq.url ?? "/";
-  let pathname = "/";
-  try {
-    pathname = new URL(urlRaw, "http://127.0.0.1").pathname;
-  } catch {
-    pathname = "/";
-  }
-
+  const startedAt = Date.now();
   const body =
     clientReq.method === "GET" || clientReq.method === "HEAD"
       ? Buffer.alloc(0)
@@ -199,28 +328,53 @@ async function handleInterceptClient(
           clientReq.on("end", () => resolve(Buffer.concat(chunks)));
           clientReq.on("error", reject);
         });
+  const tranId = extractTranId(clientReq, body);
 
-  const ct = typeof clientReq.headers["content-type"] === "string" ? clientReq.headers["content-type"] : "";
-
-  if (mockEnabled && shouldTryMock(clientReq.method ?? "GET", pathname)) {
-    const tranId = mergeTranId(pathname, body.toString("utf8"), ct);
-    if (tranId) {
-      const mock = await fetchMockJson(tranId, mockPort);
-      if (mock.ok) {
-        const payload = wrapEnvelopeResponse(tranId, mock.json);
-        clientRes.writeHead(200, {
-          "Content-Type": "application/javascript; charset=utf-8",
-          "Access-Control-Allow-Origin": clientReq.headers.origin ?? "*",
-          "Access-Control-Allow-Headers": "Origin, X-Requested-With, Content-Type, Accept, Cache-Control, X-DIRECT-CLIENT-ID",
-          "Access-Control-Allow-Credentials": "true",
-        });
-        clientRes.end(payload);
-        return;
+  const shouldAskMock = clientReq.method === "OPTIONS" || shouldTryMock(clientReq.method ?? "GET");
+  if (mockEnabled && shouldAskMock) {
+    const mock = await fetchMockResponse(clientReq, body, mockPort);
+    // 404는 저장된 mock이 없다는 뜻이므로 업스트림으로 넘기고, 그 외 결과는 그대로 반환합니다.
+    if (mock && mock.statusCode !== 404) {
+      const responseLabelRaw = mock.headers["x-dataforge-response-label"];
+      const encodedResponseLabel = Array.isArray(responseLabelRaw) ? responseLabelRaw[0] : responseLabelRaw;
+      const responseValueRaw = mock.headers["x-dataforge-response-value"];
+      const encodedResponseValue = Array.isArray(responseValueRaw) ? responseValueRaw[0] : responseValueRaw;
+      const apiNameRaw = mock.headers["x-dataforge-api-name"];
+      const encodedApiName = Array.isArray(apiNameRaw) ? apiNameRaw[0] : apiNameRaw;
+      const editorTypeRaw = mock.headers["x-dataforge-editor-type"];
+      const rawEditorType = Array.isArray(editorTypeRaw) ? editorTypeRaw[0] : editorTypeRaw;
+      const editorType = rawEditorType === "test" || rawEditorType === "error" ? rawEditorType : "default";
+      let responseLabel = encodedResponseLabel;
+      let responseValue = encodedResponseValue;
+      let apiName = encodedApiName;
+      try {
+        if (encodedResponseLabel) responseLabel = decodeURIComponent(encodedResponseLabel);
+        if (encodedResponseValue) responseValue = decodeURIComponent(encodedResponseValue);
+        if (encodedApiName) apiName = decodeURIComponent(encodedApiName);
+      } catch {
+        // 이전 버전 또는 외부 모의 서버가 보낸 일반 문자열은 그대로 표시한다.
       }
+      const responseHeaders = { ...mock.headers };
+      delete responseHeaders["x-dataforge-response-label"];
+      delete responseHeaders["x-dataforge-response-value"];
+      delete responseHeaders["x-dataforge-api-name"];
+      delete responseHeaders["x-dataforge-editor-type"];
+      recordRequest(clientReq, startedAt, {
+        result: "mock",
+        statusCode: mock.statusCode,
+        ...(tranId ? { tranId } : {}),
+        ...(responseLabel ? { responseLabel } : {}),
+        ...(apiName ? { apiName } : {}),
+        ...(responseValue ? { responseValue } : {}),
+        editorType,
+      });
+      clientRes.writeHead(mock.statusCode, responseHeaders);
+      clientRes.end(mock.body);
+      return;
     }
   }
 
-  forwardToUpstream(clientReq, clientRes, body, upstreamPort);
+  forwardToUpstream(clientReq, clientRes, body, upstreamPort, startedAt, tranId);
 }
 
 export async function applyInterceptGatewayFromConfig(): Promise<void> {
@@ -253,7 +407,15 @@ export async function applyInterceptGatewayFromConfig(): Promise<void> {
   const mockEnabled = Boolean(config.proxyServer.enabled);
 
   const server = http.createServer((req, res) => {
-    void handleInterceptClient(req, res, mockEnabled, mockPort, upstreamPort);
+    void handleInterceptClient(req, res, mockEnabled, mockPort, upstreamPort).catch((err: unknown) => {
+      gatewayLastError = err instanceof Error ? err.message : String(err);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("gateway request failed");
+    });
   });
 
   await new Promise<void>((resolve, reject) => {

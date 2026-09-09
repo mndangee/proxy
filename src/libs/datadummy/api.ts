@@ -10,6 +10,7 @@ export interface ApiResponseItem {
   infoText?: string;
   description: string;
   configuration: string;
+  queryParams?: Record<string, string>;
 }
 
 export interface ApiResponseGroups {
@@ -53,6 +54,17 @@ export interface ParsedApiResponseBundle {
   description: string;
   editorType: ApiResponseEditorTypeKey;
   configuration: string;
+  queryParams: Record<string, string>;
+}
+
+function parseBundleQueryParams(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = key.trim();
+    if (k && typeof value === "string") out[k] = value;
+  }
+  return out;
 }
 
 function tryStringifyConfigurationValue(cfg: unknown): string | null {
@@ -81,6 +93,7 @@ export function tryParseApiResponseExportBundle(parsed: unknown): ParsedApiRespo
     description,
     editorType,
     configuration,
+    queryParams: parseBundleQueryParams(o.queryParams),
   };
 }
 
@@ -92,6 +105,10 @@ function savedRowToApiItem(row: SavedApiResponseRow): ApiResponseItem {
     value: row.value,
     description: row.description,
     configuration: row.configuration,
+    queryParams: row.queryParams,
+    infoText: row.queryParams && Object.keys(row.queryParams).length
+      ? `?${new URLSearchParams(row.queryParams).toString()}`
+      : undefined,
   };
 }
 

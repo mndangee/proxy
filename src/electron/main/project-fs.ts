@@ -26,6 +26,44 @@ export const APP_PROXY_CONFIG_VERSION = 2;
 /** 디스크 v1: careGateway, v2: interceptGateway */
 export const APP_PROXY_CONFIG_VERSION_LEGACY = 1;
 
+async function detectServerCommandInDirectory(workdir: string): Promise<
+  { ok: true; command: string; script: string; packageManager: string } | { ok: false; error: string }
+> {
+  const dummyServerPath = join(workdir, "dummy.server.js");
+  try {
+    if ((await fs.stat(dummyServerPath)).isFile()) {
+      return { ok: true, command: "{{node}} dummy.server.js -port {{port}}", script: "dummy.server.js", packageManager: "node" };
+    }
+  } catch {
+    // package.json 방식도 확인한다.
+  }
+
+  let parsed: { scripts?: Record<string, unknown> };
+  try {
+    parsed = JSON.parse(await fs.readFile(join(workdir, "package.json"), "utf-8")) as { scripts?: Record<string, unknown> };
+  } catch {
+    return { ok: false, error: "package.json 또는 dummy.server.js를 찾을 수 없습니다." };
+  }
+  const scripts = parsed.scripts && typeof parsed.scripts === "object" ? parsed.scripts : {};
+  const script = ["dev", "start", "serve"].find((name) => typeof scripts[name] === "string" && String(scripts[name]).trim());
+  if (!script) return { ok: false, error: "package.json에 dev, start 또는 serve 실행 스크립트가 없습니다." };
+
+  const exists = async (name: string): Promise<boolean> => fs.stat(join(workdir, name)).then(() => true).catch(() => false);
+  const packageManager = await exists("pnpm-lock.yaml")
+    ? "pnpm"
+    : await exists("yarn.lock")
+      ? "yarn"
+      : await exists("bun.lockb") || await exists("bun.lock")
+        ? "bun"
+        : "npm";
+  const scriptBody = String(scripts[script]).toLowerCase();
+  const base = packageManager === "yarn" ? `yarn ${script}` : `${packageManager} run ${script}`;
+  let portArgs = "";
+  if (/\bvite\b|\bnuxt\b/.test(scriptBody)) portArgs = packageManager === "yarn" ? " --port {{port}}" : " -- --port {{port}}";
+  else if (/\bnext\b/.test(scriptBody)) portArgs = packageManager === "yarn" ? " -p {{port}}" : " -- -p {{port}}";
+  return { ok: true, command: `${base}${portArgs}`, script, packageManager };
+}
+
 function coerceMockProfile(raw: unknown): MockProfileType {
   return raw === "generic-json" ? "generic-json" : "legacy-tran-envelope";
 }
@@ -288,6 +326,14 @@ function manifestFromJsonFilePayload(data: unknown): ProjectManifest | null {
 
 function getAppProxyConfigPath(): string {
   return join(app.getPath("userData"), "proxy-app-config.json");
+}
+
+/** 비정상 종료 복구 시 다음 시작에서 프록시가 다시 자동 점유하지 않도록 런타임 설정만 끈다. */
+export async function disableProxyConfigAfterCrashRecovery(): Promise<void> {
+  await mergeAppProxyConfigDisk({
+    proxyServer: { enabled: false },
+    interceptGateway: { enabled: false },
+  });
 }
 
 function defaultInterceptGateway(): AppProxyInterceptGatewayConfig {
@@ -675,6 +721,14 @@ async function hasProjectWithDisplayName(root: string, displayName: string): Pro
   return false;
 }
 
+async function uniqueProjectDisplayName(root: string, requestedName: string): Promise<string> {
+  const base = requestedName.trim() || "imported-project";
+  if (!(await hasProjectWithDisplayName(root, base))) return base;
+  let suffix = 2;
+  while (await hasProjectWithDisplayName(root, `${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
 /** `apis/index.json` 한 행 */
 export interface StoredApiEntry {
   id: string;
@@ -787,9 +841,22 @@ type ApiResponseRowDisk = {
   description: string;
   editorType: "default" | "test" | "error";
   configuration: string;
+  queryParams?: Record<string, string>;
+  source?: { type: "server-dump"; id: string; fileName: string };
   createdAt: string;
   updatedAt: string;
 };
+
+function coerceResponseQueryParams(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = key.trim();
+    if (!k || typeof value !== "string") continue;
+    out[k] = value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 type ApiResponsesStoreFile = {
   version: number;
@@ -824,6 +891,84 @@ async function writeApiResponsesStore(projectRoot: string, byApiName: Record<str
 }
 
 type LooseJsonImportErr = "duplicate-name" | "no-json-files";
+
+type ImportSummary = {
+  detectedFormat: "server-dump" | "grouped-json" | "plain-json";
+  apiCount: number;
+  responseCount: number;
+  skippedFileCount: number;
+};
+
+type ServerDumpFileMeta = { tran: string; sourceId: string; label: string };
+
+/** `VD_MARN0157_1710_설명.json` 및 기존 서버의 구분자 변형을 공통 트랜 형식으로 정규화합니다. */
+function parseServerDumpFileName(fileName: string): ServerDumpFileMeta | null {
+  const stem = fileName.replace(/\.json$/i, "").normalize("NFC").trim();
+  const match = /^VD(?:[_.]+VD)?[_.]+([A-Z][A-Z0-9]*?)_(\d+)(?:_(.*))?$/i.exec(stem);
+  if (!match?.[1] || !match[2]) return null;
+  const label = (match[3] ?? "")
+    .replace(/_+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return {
+    tran: `VD.${match[1]}`,
+    sourceId: match[2],
+    label: label || `응답 ${match[2]}`,
+  };
+}
+
+function detectServerDumpFiles(fileNames: string[]): Map<string, ServerDumpFileMeta> | null {
+  if (fileNames.length < 2) return null;
+  const parsed = new Map<string, ServerDumpFileMeta>();
+  for (const fileName of fileNames) {
+    const meta = parseServerDumpFileName(fileName);
+    if (meta) parsed.set(fileName, meta);
+  }
+  return parsed.size / fileNames.length >= 0.7 ? parsed : null;
+}
+
+function serverDumpResponseTypeFromLabel(label: string): "default" | "test" | "error" | null {
+  const normalized = label.normalize("NFC").toLowerCase();
+  if (/(error|fail|failure|failed|에러|오류|실패)/i.test(normalized)) return "error";
+  if (/(test|testing|temp|temporary|테스트|시험|임시)/i.test(normalized)) return "test";
+  if (/(default|normal|success|기본|정상|성공)/i.test(normalized)) return "default";
+  return null;
+}
+
+function serverDumpSourceIdNumber(row: ApiResponseRowDisk): number {
+  const raw = row.source?.id ?? "";
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+/** label 의미를 우선하고, 명시적 기본이 없으면 미분류 응답 중 가장 작은 sourceId를 기본으로 지정합니다. */
+function assignServerDumpResponseTypes(rows: ApiResponseRowDisk[]): ApiResponseRowDisk[] {
+  const ordered = [...rows].sort((a, b) => {
+    const byId = serverDumpSourceIdNumber(a) - serverDumpSourceIdNumber(b);
+    return byId !== 0 ? byId : (a.source?.fileName ?? "").localeCompare(b.source?.fileName ?? "");
+  });
+  const classified = ordered.map((row) => ({ row, inferred: serverDumpResponseTypeFromLabel(row.label) }));
+  const explicitDefaults = classified.filter((item) => item.inferred === "default");
+  const neutral = classified.filter((item) => item.inferred === null);
+  const chosenDefault = explicitDefaults[0] ?? neutral[0] ?? classified.find((item) => item.inferred !== "error") ?? classified[0];
+
+  return classified.map(({ row, inferred }) => ({
+    ...row,
+    editorType:
+      chosenDefault?.row === row
+        ? "default"
+        : inferred === "error"
+          ? "error"
+          : "test",
+  }));
+}
+
+/** Default 응답이 하나뿐이면 API 설명을 응답 제목으로 사용해 목록에서 내용을 바로 알 수 있게 한다. */
+function labelSingleDefaultResponse(rows: ApiResponseRowDisk[], apiDescription: string): ApiResponseRowDisk[] {
+  const description = apiDescription.trim();
+  if (!description || rows.length !== 1 || rows[0]?.editorType !== "default") return rows;
+  return [{ ...rows[0], label: description }];
+}
 
 /** 한 디렉터리 바로 아래의 .json 파일명(project.json 제외), 정렬됨 */
 async function listJsonFileNamesInDirectory(dir: string): Promise<string[]> {
@@ -1231,8 +1376,8 @@ async function importApisFromJsonPaths(
  */
 async function importLooseJsonFolderAsProject(
   sourceDir: string,
-  options?: { projectDisplayName?: string },
-): Promise<{ ok: true; project: ProjectManifest } | { ok: false; error: LooseJsonImportErr }> {
+  options?: { projectDisplayName?: string; interfaceSearchRoots?: string[] },
+): Promise<{ ok: true; project: ProjectManifest; summary: ImportSummary } | { ok: false; error: LooseJsonImportErr }> {
   const nestedPlan = await collectNestedFolderJsonImports(sourceDir);
   let entries: Dirent[];
   try {
@@ -1251,13 +1396,11 @@ async function importLooseJsonFolderAsProject(
   rootJsonNames.sort((a, b) => a.localeCompare(b));
 
   const root = getProjectsRoot();
-  const title =
+  const requestedTitle =
     (options?.projectDisplayName && options.projectDisplayName.trim()) ||
     basename(sourceDir).trim() ||
     "imported-project";
-  if (await hasProjectWithDisplayName(root, title)) {
-    return { ok: false, error: "duplicate-name" };
-  }
+  const title = await uniqueProjectDisplayName(root, requestedTitle);
 
   const folderName = await uniqueFolderName(root, slugify(title));
   const dest = join(root, folderName);
@@ -1268,8 +1411,17 @@ async function importLooseJsonFolderAsProject(
   const byApiName: Record<string, ApiResponseRowDisk[]> = {};
   const usedApiKeys = new Set<string>();
 
-  const interfaceScanDirs = await expandAncestorChainWithCareCommonCore(ancestorDirsScanOrderForInterfaces(sourceDir, 5));
+  const configuredServerWorkdir = (await readAppProxyConfigDisk()).proxyServer.upstreamServerWorkdir?.trim() ?? "";
+  const interfaceScanRoots = [
+    ...ancestorDirsScanOrderForInterfaces(sourceDir, 5),
+    ...(options?.interfaceSearchRoots ?? []).flatMap((root) => ancestorDirsScanOrderForInterfaces(root, 5)),
+    ...(configuredServerWorkdir ? ancestorDirsScanOrderForInterfaces(configuredServerWorkdir, 5) : []),
+  ];
+  const interfaceScanDirs = await expandAncestorChainWithCareCommonCore(interfaceScanRoots);
   const globalCareLookup = buildCareTranLookup(await collectSfdInterfaceEntriesFromDirs(interfaceScanDirs));
+  const serverDumpFiles = nestedPlan.length === 0 ? detectServerDumpFiles(rootJsonNames) : null;
+  let skippedFileCount = 0;
+  let importedResponseCount = 0;
 
   for (const { folderName: subFolder, fileNames } of nestedPlan) {
     const folderStem = subFolder.trim();
@@ -1332,10 +1484,74 @@ async function importLooseJsonFolderAsProject(
       createdAt: now,
       updatedAt: apiUpdatedIso,
     });
-    byApiName[apiKey] = responses;
+    byApiName[apiKey] = labelSingleDefaultResponse(responses, meta.description);
   }
 
-  for (const fileName of rootJsonNames) {
+  if (serverDumpFiles) {
+    const grouped = new Map<string, { responses: ApiResponseRowDisk[]; paths: string[] }>();
+    for (const fileName of rootJsonNames) {
+      const meta = serverDumpFiles.get(fileName);
+      if (!meta) {
+        skippedFileCount += 1;
+        continue;
+      }
+      const absRoot = join(sourceDir, fileName);
+      let raw: string;
+      let configuration: string;
+      try {
+        raw = await fs.readFile(absRoot, "utf-8");
+        configuration = JSON.stringify(JSON.parse(raw) as unknown, null, 2);
+      } catch {
+        skippedFileCount += 1;
+        continue;
+      }
+      const fileMs = await pathMtimeMs(absRoot);
+      const fileMtimeIso = fileMs > 0 ? new Date(fileMs).toISOString() : now;
+      const value = `saved-${randomUUID()}`;
+      const response: ApiResponseRowDisk = {
+        id: value,
+        value,
+        label: meta.label,
+        description: `서버 더미 데이터 · ${meta.sourceId}`,
+        editorType: "default",
+        configuration,
+        source: { type: "server-dump", id: meta.sourceId, fileName },
+        createdAt: fileMtimeIso,
+        updatedAt: fileMtimeIso,
+      };
+      const bucket = grouped.get(meta.tran) ?? { responses: [], paths: [] };
+      bucket.responses.push(response);
+      bucket.paths.push(absRoot);
+      grouped.set(meta.tran, bucket);
+      importedResponseCount += 1;
+    }
+
+    for (const [tran, group] of grouped) {
+      const responses = assignServerDumpResponseTypes(group.responses);
+      const apiUpdatedIso = await maxPathMtimeIso(group.paths, now);
+      const care = findCareForProxyApi(globalCareLookup, { tran, name: tran });
+      const mappedApiName = care?.key.trim() || tran;
+      const mappedTran = care?.tranId.trim() || tran;
+      const mappedDescription = care?.desc.trim() || `서버 더미 데이터 · 응답 ${responses.length}개`;
+      if (usedApiKeys.has(mappedApiName)) {
+        skippedFileCount += group.responses.length;
+        continue;
+      }
+      items.push({
+        id: randomUUID(),
+        method: "POST",
+        tran: mappedTran,
+        description: mappedDescription,
+        name: mappedApiName,
+        createdAt: now,
+        updatedAt: apiUpdatedIso,
+      });
+      byApiName[mappedApiName] = labelSingleDefaultResponse(responses, mappedDescription);
+      usedApiKeys.add(mappedApiName);
+    }
+  }
+
+  for (const fileName of serverDumpFiles ? [] : rootJsonNames) {
     const stemFromFile = fileName.replace(/\.json$/i, "").trim();
     if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) continue;
 
@@ -1371,7 +1587,7 @@ async function importLooseJsonFolderAsProject(
       {
         id: val,
         value: val,
-        label: "default",
+        label: meta.description.trim() || "default",
         description: "",
         editorType: "default",
         configuration,
@@ -1379,12 +1595,18 @@ async function importLooseJsonFolderAsProject(
         updatedAt: rootMtimeIso,
       },
     ];
+    importedResponseCount += 1;
   }
 
-  if (items.length === 0) return { ok: false, error: "no-json-files" };
+  if (items.length === 0) {
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    return { ok: false, error: "no-json-files" };
+  }
 
   const manifestDescription =
-    nestedPlan.length > 0
+    serverDumpFiles
+      ? `서버 더미 데이터에서 ${items.length}개 API · ${importedResponseCount}개 응답`
+      : nestedPlan.length > 0
       ? `하위 폴더(및 루트 JSON)에서 ${items.length}개 API`
       : `${items.length}개의 JSON 파일에서 생성`;
 
@@ -1404,7 +1626,268 @@ async function importLooseJsonFolderAsProject(
   await writeApiResponsesStore(dest, byApiName);
   await enrichProjectApisFromNearbyInterfaceFiles(dest);
 
-  return { ok: true, project: manifest };
+  return {
+    ok: true,
+    project: manifest,
+    summary: {
+      detectedFormat: serverDumpFiles ? "server-dump" : nestedPlan.length > 0 ? "grouped-json" : "plain-json",
+      apiCount: items.length,
+      responseCount: serverDumpFiles ? importedResponseCount : Object.values(byApiName).reduce((sum, rows) => sum + rows.length, 0),
+      skippedFileCount,
+    },
+  };
+}
+
+export type ImportAnalysis = {
+  sessionId: string;
+  detectedFormat: "dataforge-project" | "server-dump" | "grouped-json" | "plain-json";
+  projectName: string;
+  apiCount: number;
+  responseCount: number;
+  defaultCount: number;
+  testCount: number;
+  errorCount: number;
+  skippedFileCount: number;
+};
+
+type ImportPlan = {
+  /** 분석 시점에 고정한 원본 스냅샷. 실행 단계에서는 실제 원본을 다시 읽지 않는다. */
+  sourcePath: string;
+  /** 스냅샷 복사 전 사용자가 선택한 실제 위치. API 모듈 메타데이터 탐색에만 사용한다. */
+  interfaceSearchRoots: string[];
+  snapshotRoot: string;
+  analysis: Omit<ImportAnalysis, "sessionId">;
+};
+
+type PendingImportSession = { plan: ImportPlan; createdAt: number };
+
+const pendingImportSessions = new Map<string, PendingImportSession>();
+const IMPORT_SESSION_TTL_MS = 30 * 60 * 1000;
+
+function getImportInterfaceSourcePath(): string {
+  return join(app.getPath("userData"), "import-interface-source.json");
+}
+
+async function readRememberedImportInterfaceFile(): Promise<string | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(getImportInterfaceSourcePath(), "utf-8")) as { path?: unknown };
+    const path = typeof parsed.path === "string" ? parsed.path.trim() : "";
+    if (!path) return null;
+    const text = await fs.readFile(path, "utf-8");
+    return parseSfdModuleInterfaces(text).length > 0 ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberImportInterfaceFile(path: string): Promise<void> {
+  await fs.writeFile(getImportInterfaceSourcePath(), JSON.stringify({ path }, null, 2), "utf-8");
+}
+
+/** 원본 주변 → 이전 선택 파일 → 최초 1회 선택 순으로 API 메타데이터 위치를 결정한다. */
+async function resolveImportInterfaceSearchRoots(picked: string): Promise<string[]> {
+  const stat = await fs.stat(picked);
+  const originalRoot = stat.isDirectory() ? picked : dirname(picked);
+  const nearbyDirs = await expandAncestorChainWithCareCommonCore(ancestorDirsScanOrderForInterfaces(originalRoot, 5));
+  if ((await collectSfdInterfaceEntriesFromDirs(nearbyDirs)).length > 0) return [originalRoot];
+
+  const remembered = await readRememberedImportInterfaceFile();
+  if (remembered) return [originalRoot, dirname(remembered)];
+
+  const result = await dialog.showOpenDialog({
+    title: "API 이름과 설명이 있는 모듈 파일 선택 (선택 사항)",
+    buttonLabel: "모듈 파일 사용",
+    properties: ["openFile"],
+    filters: [{ name: "JavaScript, TypeScript, JSON", extensions: ["js", "mjs", "cjs", "ts", "json"] }],
+  });
+  const selected = result.canceled ? "" : (result.filePaths[0]?.trim() ?? "");
+  if (!selected) return [originalRoot];
+  try {
+    const text = await fs.readFile(selected, "utf-8");
+    if (parseSfdModuleInterfaces(text).length === 0) return [originalRoot];
+    await rememberImportInterfaceFile(selected);
+    return [originalRoot, dirname(selected)];
+  } catch {
+    return [originalRoot];
+  }
+}
+
+function clearExpiredImportSessions(): void {
+  const cutoff = Date.now() - IMPORT_SESSION_TTL_MS;
+  for (const [sessionId, session] of pendingImportSessions) {
+    if (session.createdAt < cutoff) {
+      pendingImportSessions.delete(sessionId);
+      void fs.rm(session.plan.snapshotRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
+function countResponseTypes(rows: ApiResponseRowDisk[]): { defaultCount: number; testCount: number; errorCount: number } {
+  return rows.reduce(
+    (counts, row) => {
+      if (row.editorType === "error") counts.errorCount += 1;
+      else if (row.editorType === "test") counts.testCount += 1;
+      else counts.defaultCount += 1;
+      return counts;
+    },
+    { defaultCount: 0, testCount: 0, errorCount: 0 },
+  );
+}
+
+async function analyzeImportDirectory(
+  sourceDir: string,
+  projectNameOverride?: string,
+): Promise<Omit<ImportAnalysis, "sessionId"> | { error: string }> {
+  const manifestDir = await findProjectDirWithManifest(sourceDir);
+  if (manifestDir) {
+    const manifest = await readManifest(manifestDir);
+    if (!manifest) return { error: "invalid-manifest" };
+    const apis = await readApisIndex(manifestDir);
+    const store = await readApiResponsesStore(manifestDir);
+    const responses = Object.values(store.byApiName).flat();
+    return {
+      detectedFormat: "dataforge-project",
+      projectName: manifest.name,
+      apiCount: apis.length,
+      responseCount: responses.length,
+      ...countResponseTypes(responses),
+      skippedFileCount: 0,
+    };
+  }
+
+  const nestedPlan = await collectNestedFolderJsonImports(sourceDir);
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch {
+    return { error: "no-json-files" };
+  }
+  const rootJsonNames = entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json") && entry.name.toLowerCase() !== "project.json")
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  const serverDumpFiles = nestedPlan.length === 0 ? detectServerDumpFiles(rootJsonNames) : null;
+  const projectName = projectNameOverride?.trim() || basename(sourceDir).trim() || "imported-project";
+
+  if (serverDumpFiles) {
+    const grouped = new Map<string, ApiResponseRowDisk[]>();
+    let skippedFileCount = 0;
+    for (const fileName of rootJsonNames) {
+      const meta = serverDumpFiles.get(fileName);
+      if (!meta) {
+        skippedFileCount += 1;
+        continue;
+      }
+      try {
+        JSON.parse(await fs.readFile(join(sourceDir, fileName), "utf-8"));
+      } catch {
+        skippedFileCount += 1;
+        continue;
+      }
+      const value = `analysis-${meta.sourceId}-${fileName}`;
+      const rows = grouped.get(meta.tran) ?? [];
+      rows.push({
+        id: value,
+        value,
+        label: meta.label,
+        description: "",
+        editorType: "default",
+        configuration: "{}",
+        source: { type: "server-dump", id: meta.sourceId, fileName },
+        createdAt: "",
+        updatedAt: "",
+      });
+      grouped.set(meta.tran, rows);
+    }
+    const responses = [...grouped.values()].flatMap(assignServerDumpResponseTypes);
+    if (responses.length === 0) return { error: "no-json-files" };
+    return {
+      detectedFormat: "server-dump",
+      projectName,
+      apiCount: grouped.size,
+      responseCount: responses.length,
+      ...countResponseTypes(responses),
+      skippedFileCount,
+    };
+  }
+
+  const nestedResponseCount = nestedPlan.reduce((sum, item) => sum + item.fileNames.length, 0);
+  const responseCount = nestedResponseCount + rootJsonNames.length;
+  if (responseCount === 0) return { error: "no-json-files" };
+  return {
+    detectedFormat: nestedPlan.length > 0 ? "grouped-json" : "plain-json",
+    projectName,
+    apiCount: nestedPlan.length > 0 ? nestedPlan.length + rootJsonNames.length : rootJsonNames.length,
+    responseCount,
+    defaultCount: nestedPlan.length > 0 ? nestedPlan.length + rootJsonNames.length : rootJsonNames.length,
+    testCount: Math.max(0, responseCount - (nestedPlan.length + rootJsonNames.length)),
+    errorCount: 0,
+    skippedFileCount: 0,
+  };
+}
+
+async function prepareImportPlan(picked: string, interfaceSearchRoots: string[]): Promise<ImportPlan | { error: string }> {
+  const snapshotRoot = join(tmpdir(), `df-import-plan-${randomUUID()}`);
+  try {
+    await fs.mkdir(snapshotRoot, { recursive: true });
+
+    let sourcePath: string;
+    let projectNameOverride: string | undefined;
+    if (picked.toLowerCase().endsWith(".zip")) {
+      new AdmZip(picked).extractAllTo(snapshotRoot, true);
+      sourcePath = snapshotRoot;
+      projectNameOverride = basename(picked).replace(/\.zip$/i, "").trim() || undefined;
+    } else {
+      const stat = await fs.stat(picked);
+      if (stat.isDirectory()) {
+        sourcePath = join(snapshotRoot, "source");
+        await fs.cp(picked, sourcePath, { recursive: true });
+      } else if (stat.isFile() && picked.toLowerCase().endsWith(".json")) {
+        if (basename(picked).toLowerCase() === "project.json") {
+          sourcePath = join(snapshotRoot, "source");
+          await fs.cp(dirname(picked), sourcePath, { recursive: true });
+        } else {
+          sourcePath = join(snapshotRoot, "source");
+          await fs.mkdir(sourcePath, { recursive: true });
+          await fs.copyFile(picked, join(sourcePath, basename(picked)));
+          projectNameOverride = basename(picked).replace(/\.json$/i, "").trim() || undefined;
+        }
+      } else {
+        await fs.rm(snapshotRoot, { recursive: true, force: true });
+        return { error: "invalid-manifest" };
+      }
+    }
+
+    let analysis: Omit<ImportAnalysis, "sessionId"> | { error: string };
+    const sourceStat = await fs.stat(sourcePath);
+    if (sourceStat.isDirectory()) {
+      analysis = await analyzeImportDirectory(sourcePath, projectNameOverride);
+    } else {
+      const parsed = JSON.parse(await fs.readFile(sourcePath, "utf-8")) as unknown;
+      const manifest = manifestFromJsonFilePayload(parsed);
+      analysis = manifest
+        ? {
+            detectedFormat: "dataforge-project",
+            projectName: manifest.name,
+            apiCount: 0,
+            responseCount: 0,
+            defaultCount: 0,
+            testCount: 0,
+            errorCount: 0,
+            skippedFileCount: 0,
+          }
+        : { error: "invalid-manifest" };
+    }
+
+    if ("error" in analysis) {
+      await fs.rm(snapshotRoot, { recursive: true, force: true });
+      return analysis;
+    }
+    return { sourcePath, interfaceSearchRoots, snapshotRoot, analysis };
+  } catch {
+    await fs.rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
+    return { error: picked.toLowerCase().endsWith(".zip") ? "invalid-zip" : "invalid-manifest" };
+  }
 }
 
 type LegacyRow = {
@@ -1424,6 +1907,9 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:export");
   ipcMain.removeHandler("project-fs:exportZip");
   ipcMain.removeHandler("project-fs:import");
+  ipcMain.removeHandler("project-fs:analyzeImport");
+  ipcMain.removeHandler("project-fs:executeImport");
+  ipcMain.removeHandler("project-fs:cancelImport");
   ipcMain.removeHandler("project-fs:migrateFromLegacy");
   ipcMain.removeHandler("project-fs:getRootPath");
   ipcMain.removeHandler("project-fs:importApisJsonPick");
@@ -1438,9 +1924,56 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:deleteApiResponse");
   ipcMain.removeHandler("project-fs:getAppProxyConfig");
   ipcMain.removeHandler("project-fs:setAppProxyConfig");
+  ipcMain.removeHandler("project-fs:pickServerDirectory");
+  ipcMain.removeHandler("project-fs:detectServerCommand");
+  ipcMain.removeHandler("project-fs:prepareProxyTakeover");
+  ipcMain.removeHandler("project-fs:restoreProxyTakeover");
+  ipcMain.removeHandler("project-fs:restoreActiveProxyTakeover");
   ipcMain.removeHandler("project-fs:setLinkedClients");
 
   ipcMain.handle("project-fs:getAppProxyConfig", async (): Promise<AppProxyConfig> => readAppProxyConfigDisk());
+
+  ipcMain.handle("project-fs:pickServerDirectory", async () => {
+    const result = await dialog.showOpenDialog({ title: "서버 프로젝트 폴더 선택", properties: ["openDirectory"] });
+    return result.canceled || !result.filePaths[0] ? { ok: false as const, error: "cancelled" } : { ok: true as const, path: result.filePaths[0] };
+  });
+
+  ipcMain.handle("project-fs:detectServerCommand", async (_e, rawWorkdir: unknown) => {
+    const workdir = typeof rawWorkdir === "string" ? rawWorkdir.trim() : "";
+    if (!workdir) return { ok: false as const, error: "invalid-directory" };
+    return detectServerCommandInDirectory(workdir);
+  });
+
+  ipcMain.handle("project-fs:prepareProxyTakeover", async (_e, payload: unknown) => {
+    const value = payload && typeof payload === "object"
+      ? payload as { clientPort?: unknown; upstreamPort?: unknown; workdir?: unknown; command?: unknown; confirmed?: unknown }
+      : {};
+    const clientPort = typeof value.clientPort === "number" ? Math.floor(value.clientPort) : 0;
+    const upstreamPort = typeof value.upstreamPort === "number" ? Math.floor(value.upstreamPort) : 0;
+    const workdir = typeof value.workdir === "string" ? value.workdir.trim() : "";
+    const command = typeof value.command === "string" ? value.command.trim() : "";
+    const confirmed = value.confirmed === true;
+    if (clientPort < 1 || clientPort > 65535 || upstreamPort < 1 || upstreamPort > 65535 || !workdir || !command) return { ok: false as const, error: "invalid-input" };
+    const { prepareProxyPortTakeover } = await import("./proxy-port-takeover");
+    return prepareProxyPortTakeover(clientPort, upstreamPort, workdir, command, confirmed);
+  });
+
+  ipcMain.handle("project-fs:restoreProxyTakeover", async (_e, payload: unknown) => {
+    const value = payload && typeof payload === "object"
+      ? payload as { clientPort?: unknown; workdir?: unknown; command?: unknown }
+      : {};
+    const clientPort = typeof value.clientPort === "number" ? Math.floor(value.clientPort) : 0;
+    const workdir = typeof value.workdir === "string" ? value.workdir.trim() : "";
+    const command = typeof value.command === "string" ? value.command.trim() : "";
+    if (clientPort < 1 || clientPort > 65535 || !workdir || !command) return { ok: false as const, error: "invalid-input" };
+    const { restoreServerAfterFailedTakeover } = await import("./proxy-port-takeover");
+    return restoreServerAfterFailedTakeover(clientPort, workdir, command);
+  });
+
+  ipcMain.handle("project-fs:restoreActiveProxyTakeover", async () => {
+    const { restoreActiveProxyTakeover } = await import("./proxy-port-takeover");
+    return restoreActiveProxyTakeover();
+  });
 
   ipcMain.handle("project-fs:setAppProxyConfig", async (_e, partial: unknown): Promise<
     | { ok: true; config: AppProxyConfig }
@@ -1449,7 +1982,7 @@ export function registerProjectFsIpc(): void {
     try {
       const next = await mergeAppProxyConfigDisk(partial);
       const { applyMockProxyFromConfig } = await import("./mock-proxy-server");
-      void applyMockProxyFromConfig();
+      await applyMockProxyFromConfig();
       return { ok: true as const, config: next };
     } catch {
       return { ok: false as const, error: "save-failed" };
@@ -1601,11 +2134,8 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, path: outPath };
   });
 
-  ipcMain.handle("project-fs:import", async () => {
+  const importPickedSource = async (picked: string, interfaceSearchRoots: string[] = []) => {
     await ensureProjectsRoot();
-    const picked = await pickImportSourcePath();
-    if (!picked) return { ok: false as const, error: "cancelled" };
-
     let srcDir = picked;
     let cleanupTmp: string | null = null;
 
@@ -1622,10 +2152,11 @@ export function registerProjectFsIpc(): void {
           if (zipTitle.toLowerCase().endsWith(".zip")) zipTitle = zipTitle.slice(0, -4);
           const loose = await importLooseJsonFolderAsProject(tmpRoot, {
             projectDisplayName: zipTitle.trim() || undefined,
+            interfaceSearchRoots,
           });
           await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
           cleanupTmp = null;
-          if (loose.ok) return { ok: true as const, project: loose.project };
+          if (loose.ok) return { ok: true as const, project: loose.project, summary: loose.summary };
           if (loose.error === "duplicate-name") return { ok: false as const, error: "duplicate-name" };
           if (loose.error === "no-json-files") return { ok: false as const, error: "no-json-files" };
           return { ok: false as const, error: "invalid-manifest" };
@@ -1684,10 +2215,11 @@ export function registerProjectFsIpc(): void {
         if (st.isDirectory()) {
           const loose = await importLooseJsonFolderAsProject(srcDir, {
             projectDisplayName: basename(srcDir).trim() || undefined,
+            interfaceSearchRoots,
           });
           if (loose.ok) {
             if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
-            return { ok: true as const, project: loose.project };
+            return { ok: true as const, project: loose.project, summary: loose.summary };
           }
           if (loose.error === "duplicate-name") {
             if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
@@ -1706,10 +2238,7 @@ export function registerProjectFsIpc(): void {
     }
 
     const root = getProjectsRoot();
-    if (await hasProjectWithDisplayName(root, incoming.name)) {
-      if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
-      return { ok: false as const, error: "duplicate-name" };
-    }
+    const importedName = await uniqueProjectDisplayName(root, incoming.name);
 
     const folderName = await uniqueFolderName(root, slugify(incoming.folderName || incoming.name));
     const dest = join(root, folderName);
@@ -1719,6 +2248,7 @@ export function registerProjectFsIpc(): void {
     const imported: ProjectManifest = {
       ...incoming,
       id: randomUUID(),
+      name: importedName,
       folderName,
       updatedAt: now,
     };
@@ -1728,6 +2258,48 @@ export function registerProjectFsIpc(): void {
     if (cleanupTmp) await fs.rm(cleanupTmp, { recursive: true, force: true }).catch(() => {});
 
     return { ok: true as const, project: imported };
+  };
+
+  ipcMain.handle("project-fs:analyzeImport", async () => {
+    clearExpiredImportSessions();
+    const picked = await pickImportSourcePath();
+    if (!picked) return { ok: false as const, error: "cancelled" };
+    const interfaceSearchRoots = await resolveImportInterfaceSearchRoots(picked);
+    const plan = await prepareImportPlan(picked, interfaceSearchRoots);
+    if ("error" in plan) return { ok: false as const, error: plan.error };
+    const sessionId = randomUUID();
+    pendingImportSessions.set(sessionId, { plan, createdAt: Date.now() });
+    return { ok: true as const, analysis: { sessionId, ...plan.analysis } satisfies ImportAnalysis };
+  });
+
+  ipcMain.handle("project-fs:executeImport", async (_e, sessionId: unknown) => {
+    clearExpiredImportSessions();
+    const id = typeof sessionId === "string" ? sessionId.trim() : "";
+    const session = id ? pendingImportSessions.get(id) : undefined;
+    if (!session) return { ok: false as const, error: "import-session-not-found" };
+    pendingImportSessions.delete(id);
+    try {
+      const result = await importPickedSource(session.plan.sourcePath, session.plan.interfaceSearchRoots);
+      if (result.ok && !("summary" in result)) return { ...result, summary: session.plan.analysis };
+      return result;
+    } finally {
+      await fs.rm(session.plan.snapshotRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  ipcMain.handle("project-fs:cancelImport", async (_e, sessionId: unknown) => {
+    const id = typeof sessionId === "string" ? sessionId.trim() : "";
+    const session = id ? pendingImportSessions.get(id) : undefined;
+    if (id) pendingImportSessions.delete(id);
+    if (session) await fs.rm(session.plan.snapshotRoot, { recursive: true, force: true }).catch(() => {});
+    return { ok: true as const };
+  });
+
+  /** 기존 UI 호환: 분석 확인 단계가 연결되기 전까지 선택 후 즉시 가져오기 */
+  ipcMain.handle("project-fs:import", async () => {
+    const picked = await pickImportSourcePath();
+    if (!picked) return { ok: false as const, error: "cancelled" };
+    return importPickedSource(picked);
   });
 
   ipcMain.handle("project-fs:migrateFromLegacy", async (_e, legacy: LegacyRow[]) => {
@@ -2027,6 +2599,7 @@ export function registerProjectFsIpc(): void {
     const editorRaw = String(pl.editorType ?? "default").toLowerCase();
     const editorType: "default" | "test" | "error" = editorRaw === "test" ? "test" : editorRaw === "error" ? "error" : "default";
     const configuration = String(pl.configuration ?? "");
+    const queryParams = coerceResponseQueryParams(pl.queryParams);
     const existingValue = pl.value != null && String(pl.value).trim() ? String(pl.value).trim() : null;
 
     const root = getProjectsRoot();
@@ -2049,6 +2622,7 @@ export function registerProjectFsIpc(): void {
           description,
           editorType,
           configuration,
+          queryParams,
           updatedAt: now,
         };
         outValue = list[idx].value;
@@ -2061,6 +2635,7 @@ export function registerProjectFsIpc(): void {
           description,
           editorType,
           configuration,
+          queryParams,
           createdAt: now,
           updatedAt: now,
         });
@@ -2074,6 +2649,7 @@ export function registerProjectFsIpc(): void {
         description,
         editorType,
         configuration,
+        queryParams,
         createdAt: now,
         updatedAt: now,
       });

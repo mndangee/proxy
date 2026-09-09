@@ -28,7 +28,33 @@ export interface ProjectFsApi {
   updateFavorite: (payload: { folderName: string; isFavorite: boolean }) => Promise<{ ok: true } | { ok: false; error: string }>;
   export: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   exportZip: (folderName: string) => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
-  import: () => Promise<{ ok: true; project: ProjectManifest } | { ok: false; error: string }>;
+  import: () => Promise<
+    | {
+        ok: true;
+        project: ProjectManifest;
+        summary?: { detectedFormat: "server-dump" | "grouped-json" | "plain-json"; apiCount: number; responseCount: number; skippedFileCount: number };
+      }
+    | { ok: false; error: string }
+  >;
+  analyzeImport: () => Promise<
+    | {
+        ok: true;
+        analysis: {
+          sessionId: string;
+          detectedFormat: "dataforge-project" | "server-dump" | "grouped-json" | "plain-json";
+          projectName: string;
+          apiCount: number;
+          responseCount: number;
+          defaultCount: number;
+          testCount: number;
+          errorCount: number;
+          skippedFileCount: number;
+        };
+      }
+    | { ok: false; error: string }
+  >;
+  executeImport: (sessionId: string) => ReturnType<ProjectFsApi["import"]>;
+  cancelImport: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   migrateFromLegacy: (legacy: unknown[]) => Promise<{ ok: true; count: number } | { ok: false; error: string }>;
   getRootPath: () => Promise<string>;
   deleteFolder: (folderName: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -51,10 +77,21 @@ export interface ProjectFsApi {
   upsertApiResponse: (
     folderName: string,
     apiName: string,
-    payload: { value: string | null; label: string; description: string; editorType: string; configuration: string },
+    payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string> },
   ) => Promise<{ ok: true; value: string } | { ok: false; error: string }>;
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   getAppProxyConfig: () => Promise<AppProxyConfig>;
+  pickServerDirectory: () => Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  detectServerCommand: (workdir: string) => Promise<
+    { ok: true; command: string; script: string; packageManager: string } | { ok: false; error: string }
+  >;
+  prepareProxyTakeover: (payload: { clientPort: number; upstreamPort: number; workdir: string; command: string; confirmed?: boolean }) => Promise<
+    { ok: true; stopped: number[] } | { ok: false; error: string; port?: number; detail?: string }
+  >;
+  restoreProxyTakeover: (payload: { clientPort: number; workdir: string; command: string }) => Promise<
+    { ok: true } | { ok: false; error: string }
+  >;
+  restoreActiveProxyTakeover: () => Promise<{ ok: true; restored: boolean } | { ok: false; error: string }>;
   setAppProxyConfig: (
     partial: {
       proxyServer?: {
@@ -91,6 +128,33 @@ export interface ProjectFsApi {
     upstreamSpawn?: { running: boolean; lastError?: string };
     careMockSpawn?: { running: boolean; lastError?: string };
   }>;
+  getProxyDiagnostics: () => Promise<{
+    overall: "healthy" | "checking" | "error" | "inactive";
+    summary: string;
+    steps: Record<string, {
+      state: "healthy" | "checking" | "error" | "inactive";
+      title: string;
+      detail: string;
+      port?: number;
+      solution?: string;
+    }>;
+  }>;
+  getRecentProxyRequests: () => Promise<Array<{
+    id: string;
+    timestamp: string;
+    method: string;
+    path: string;
+    result: "mock" | "upstream" | "error";
+    statusCode: number;
+    durationMs: number;
+    tranId?: string;
+    responseLabel?: string;
+    apiName?: string;
+    responseValue?: string;
+    editorType?: "default" | "test" | "error";
+    error?: string;
+  }>>;
+  clearRecentProxyRequests: () => Promise<{ ok: true }>;
   importApisJsonPick: (
     folderName: string,
   ) => Promise<

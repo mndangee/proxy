@@ -6,6 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 // Assets
 import EditIcon from "@/assets/svg/EditIcon";
 import DeleteIcon from "@/assets/svg/DeleteIcon";
+import ExpandArrowIcon from "@/assets/svg/ExpandArrowIcon";
 
 // Components
 import type { checkBoxObjectType } from "@/components/common/CheckBox";
@@ -14,15 +15,22 @@ import { ConfirmModal, NoticeModal } from "@/components/common/modals";
 import Table from "@/components/shared/Table";
 
 // Libs
+import { navigateApp } from "@/libs/app-navigation";
 import { slugify } from "@/libs/datadummy/home";
 import {
   buildApiEndpointsExportBundle,
   deleteProjectApiEndpoint,
   formatAddApiUserError,
   formatApiEndpointTableDate,
+  getAppProxyConfig,
+  getSavedApiResponsesForProjectApi,
+  persistMockActiveApiResponse,
+  PROJECT_API_RESPONSES_CHANGED_EVENT,
   sortApiEndpointsByCreatedAt,
   sortApiEndpointsByModifiedAt,
 } from "@/libs/projects/store";
+import type { SavedApiResponseRow } from "@/libs/projects/store";
+import type { MockActiveApiResponseRef } from "@/types";
 
 // Types
 import type { ApiEndpoint } from "@/types";
@@ -79,14 +87,17 @@ function buildHeader(params: {
   onModifiedSortClick: () => void;
   sortField: "created" | "modified";
   modifiedOrder: "asc" | "desc";
+  getResponses: (apiName: string) => SavedApiResponseRow[];
+  expandedApiId: string | null;
+  toggleExpanded: (apiId: string) => void;
 }): TableHeaderType[] {
-  const { onEdit, requestDelete, onModifiedSortClick, sortField, modifiedOrder } = params;
+  const { onEdit, requestDelete, onModifiedSortClick, sortField, modifiedOrder, getResponses, expandedApiId, toggleExpanded } = params;
 
   return [
     {
       value: "method",
       name: "메서드",
-      width: "10%",
+      width: "8%",
       textAlign: "center",
       cellClassName: "flex items-center justify-center",
       render: (row) => <MethodTag method={row.method as HttpMethod} className="inline-flex min-w-0" />,
@@ -94,7 +105,7 @@ function buildHeader(params: {
     {
       value: "name",
       name: "API 이름",
-      width: "20%",
+      width: "16%",
       textAlign: "left",
       cellClassName: "min-w-0 overflow-hidden",
       render: (row) => (
@@ -110,7 +121,7 @@ function buildHeader(params: {
     {
       value: "tran",
       name: "트랜 이름",
-      width: "25%",
+      width: "18%",
       textAlign: "left",
       cellClassName: "min-w-0 overflow-hidden",
       render: (row) => (
@@ -120,9 +131,46 @@ function buildHeader(params: {
       ),
     },
     {
+      value: "responses",
+      name: "응답",
+      width: "24%",
+      textAlign: "left",
+      cellClassName: "min-w-0",
+      render: (row) => {
+        const responses = getResponses(row.name || "");
+        const counts = responses.reduce(
+          (acc, response) => {
+            acc[response.editorType] += 1;
+            if (response.queryParams && Object.keys(response.queryParams).length > 0) acc.conditional += 1;
+            return acc;
+          },
+          { default: 0, test: 0, error: 0, conditional: 0 },
+        );
+        if (responses.length === 0) return <span className="typo-caption-1 text-label-assistant">응답 없음</span>;
+        return (
+          <button
+            type="button"
+            onClick={() => toggleExpanded(row.id)}
+            className="flex min-w-0 cursor-pointer flex-wrap items-center gap-1 rounded-3 text-left hover:bg-gray-50"
+            title={`전체 응답 ${responses.length}개 · ${expandedApiId === row.id ? "접기" : "펼치기"}`}
+            aria-expanded={expandedApiId === row.id}
+          >
+            {counts.default > 0 ? <span className="typo-body-2-normal font-semibold text-gray-700">Default {counts.default}</span> : null}
+            {counts.default > 0 && (counts.test > 0 || counts.error > 0 || counts.conditional > 0) ? <span className="typo-body-2-normal text-gray-300">·</span> : null}
+            {counts.test > 0 ? <span className="typo-body-2-normal font-semibold text-blue-700">Test {counts.test}</span> : null}
+            {counts.test > 0 && (counts.error > 0 || counts.conditional > 0) ? <span className="typo-body-2-normal text-gray-300">·</span> : null}
+            {counts.error > 0 ? <span className="typo-body-2-normal font-semibold text-red-700">Error {counts.error}</span> : null}
+            {counts.error > 0 && counts.conditional > 0 ? <span className="typo-body-2-normal text-gray-300">·</span> : null}
+            {counts.conditional > 0 ? <span className="typo-body-2-normal font-semibold text-violet-700">조건 {counts.conditional}</span> : null}
+            <ExpandArrowIcon className={`text-label-assistant ml-1 h-[7px] w-3 transition-transform ${expandedApiId === row.id ? "rotate-180" : ""}`} />
+          </button>
+        );
+      },
+    },
+    {
       value: "description",
       name: "설명",
-      width: "25%",
+      width: "14%",
       textAlign: "left",
       cellClassName: "min-w-0 overflow-hidden",
       render: (row) => (
@@ -147,14 +195,14 @@ function buildHeader(params: {
           ) : null}
         </button>
       ),
-      width: "20%",
+      width: "12%",
       textAlign: "left",
       render: (row) => <span className="whitespace-nowrap">{formatApiEndpointTableDate(row.updatedAt ?? row.lastModified)}</span>,
     },
     {
       value: "actions",
       name: "작업",
-      width: "10%",
+      width: "8%",
       textAlign: "left",
       cellClassName: "flex items-center",
       render: (row) => (
@@ -191,6 +239,10 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
   const [checkState, setCheckState] = useState<checkBoxObjectType>({});
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [noticeMessage, setNoticeMessage] = useState("");
+  const [responsesTick, setResponsesTick] = useState(0);
+  const [expandedApiId, setExpandedApiId] = useState<string | null>(null);
+  const [activeResponses, setActiveResponses] = useState<Record<string, MockActiveApiResponseRef>>({});
+  const [applyingResponseValue, setApplyingResponseValue] = useState<string | null>(null);
 
   const sortedEndpoints = useMemo(() => {
     if (sortField === "created") return sortApiEndpointsByCreatedAt(endpoints, createdSort);
@@ -216,6 +268,22 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
       return next;
     });
   }, [sortedIdsKey]);
+
+  useEffect(() => {
+    const onResponsesChanged = () => setResponsesTick((tick) => tick + 1);
+    window.addEventListener(PROJECT_API_RESPONSES_CHANGED_EVENT, onResponsesChanged);
+    return () => window.removeEventListener(PROJECT_API_RESPONSES_CHANGED_EVENT, onResponsesChanged);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getAppProxyConfig().then((config) => {
+      if (!cancelled) setActiveResponses(config.mockActiveApiResponses ?? {});
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const showNotice = useCallback((message: string) => {
     setNoticeMessage(message);
@@ -268,9 +336,104 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
         onModifiedSortClick: onModifiedHeaderClick,
         sortField,
         modifiedOrder: modifiedSort,
+        getResponses: (apiName) => getSavedApiResponsesForProjectApi(project.id, apiName),
+        expandedApiId,
+        toggleExpanded: (apiId) => setExpandedApiId((current) => current === apiId ? null : apiId),
       }),
-    [onEdit, onModifiedHeaderClick, sortField, modifiedSort],
+    [onEdit, onModifiedHeaderClick, sortField, modifiedSort, project.id, responsesTick, expandedApiId],
   );
+
+  const renderExpandedResponses = useCallback((endpoint: ApiEndpoint) => {
+    if (expandedApiId !== endpoint.id) return null;
+    const responses = getSavedApiResponsesForProjectApi(project.id, endpoint.name);
+    const conditionMeta = responses.map((response, index) => {
+      const entries = Object.entries(response.queryParams ?? {}).sort(([a], [b]) => a.localeCompare(b));
+      return {
+        response,
+        index,
+        conditionCount: entries.length,
+        signature: entries.map(([key, value]) => `${key}=${value}`).join("&"),
+      };
+    });
+    const rankedConditions = conditionMeta
+      .filter((item) => item.conditionCount > 0)
+      .sort((a, b) => b.conditionCount - a.conditionCount || a.index - b.index);
+    const priorityByValue = new Map(rankedConditions.map((item, index) => [item.response.value, index + 1]));
+    const duplicateConditionCounts = rankedConditions.reduce((counts, item) => {
+      counts.set(item.signature, (counts.get(item.signature) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>());
+    return (
+      <div className="bg-gray-50 px-6 py-4 pl-[68px]">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="typo-body-2-normal text-label-normal font-semibold">{endpoint.tran || endpoint.name} 응답 {responses.length}개</p>
+            {rankedConditions.length > 0 ? <p className="typo-caption-1 text-label-assistant mt-1">쿼리 조건이 많은 응답부터 자동으로 선택됩니다.</p> : null}
+          </div>
+          <button type="button" className="typo-caption-1 text-label-primary cursor-pointer hover:underline" onClick={() => navigateApp(`/api/${encodeURIComponent(endpoint.name)}`)}>
+            API 상세 보기
+          </button>
+        </div>
+        <div className="space-y-2">
+          {responses.map((response) => {
+            const active = activeResponses[endpoint.name] ?? activeResponses[endpoint.tran];
+            const isActive = active?.responseValue === response.value;
+            const queryText = Object.entries(response.queryParams ?? {}).map(([key, value]) => `${key}=${value}`).join(" · ");
+            const conditionCount = Object.keys(response.queryParams ?? {}).length;
+            const signature = Object.entries(response.queryParams ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join("&");
+            const isDuplicateCondition = conditionCount > 0 && (duplicateConditionCounts.get(signature) ?? 0) > 1;
+            const conditionPriority = priorityByValue.get(response.value);
+            return (
+              <div key={response.value} className={`rounded-3 flex flex-wrap items-center gap-3 border px-4 py-3 ${isActive ? "border-emerald-300 bg-emerald-50" : "border-border-enabled bg-background-white"}`}>
+                <span
+                  className={`typo-caption-1 rounded-8 inline-flex min-w-[80px] justify-center px-4 py-2 text-center font-bold ${
+                    response.editorType === "error"
+                      ? "bg-red-100 text-red-800"
+                      : response.editorType === "test"
+                        ? "bg-blue-100 text-blue-800"
+                        : "bg-gray-100 text-gray-800"
+                  }`}
+                >
+                  {response.editorType === "default" ? "Default" : response.editorType === "test" ? "Test" : "Error"}
+                </span>
+                <div className="min-w-[180px] flex-1">
+                  <p className="typo-body-2-normal text-label-normal font-medium">{response.label || "이름 없는 응답"}</p>
+                  {response.description ? <p className="typo-caption-1 text-label-assistant mt-0.5">{response.description}</p> : null}
+                  {queryText ? (
+                    <p className="typo-caption-1 mt-1 text-violet-700">
+                      조건: {queryText} · 조건 {conditionCount}개 · 우선순위 {conditionPriority}
+                    </p>
+                  ) : null}
+                  {isDuplicateCondition ? <p className="typo-caption-1 mt-1 font-medium text-amber-700">동일한 조건이 있습니다. 목록에서 위 응답이 우선됩니다.</p> : null}
+                </div>
+                {isActive ? <span className="typo-caption-1 font-semibold text-emerald-700">사용 중</span> : (
+                  <button
+                    type="button"
+                    disabled={applyingResponseValue === response.value}
+                    className="typo-caption-1 border-border-primary text-label-primary rounded-3 cursor-pointer border px-3 py-2 disabled:cursor-wait disabled:opacity-50"
+                    onClick={() => {
+                      void (async () => {
+                        setApplyingResponseValue(response.value);
+                        await persistMockActiveApiResponse(endpoint.name, { responseValue: response.value, editorType: response.editorType }, { alsoKeys: endpoint.tran && endpoint.tran !== endpoint.name ? [endpoint.tran] : [] });
+                        const next = { responseValue: response.value, editorType: response.editorType };
+                        setActiveResponses((current) => ({ ...current, [endpoint.name]: next, ...(endpoint.tran ? { [endpoint.tran]: next } : {}) }));
+                        setApplyingResponseValue(null);
+                      })();
+                    }}
+                  >
+                    {applyingResponseValue === response.value ? "적용 중" : "응답으로 사용"}
+                  </button>
+                )}
+                <button type="button" className="typo-caption-1 text-label-assistant cursor-pointer hover:underline" onClick={() => navigateApp(`/api/json?state=edit&apiName=${encodeURIComponent(endpoint.name)}&type=${response.editorType}&responseValue=${encodeURIComponent(response.value)}`)}>
+                  상세 보기
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }, [activeResponses, applyingResponseValue, expandedApiId, project.id]);
 
   return (
     <>
@@ -318,7 +481,7 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
 
         <div className="rounded-4 border-border-enabled bg-background-white ds-scrollbar-none max-h-[min(65vh,720px)] overflow-auto overscroll-y-contain border">
           <Table
-            className="w-full min-w-[720px]"
+            className="w-full min-w-[980px]"
             header={header}
             data={sortedEndpoints}
             hasCheckBox
@@ -328,6 +491,7 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
             headerRowClassName={apiHeaderRowClass}
             bodyRowClassName={apiBodyRowClass}
             stickyHeader
+            renderExpandedRow={renderExpandedResponses}
           />
         </div>
       </div>

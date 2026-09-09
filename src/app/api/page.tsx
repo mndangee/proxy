@@ -181,7 +181,7 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
           isOpen={jsonImportOpen}
           onClose={() => setJsonImportOpen(false)}
           defaultTitle="가져온 응답"
-          onConfirm={async ({ label, description, editorType, configuration }) => {
+          onConfirm={async ({ label, description, editorType, configuration, queryParams }) => {
             if (!endpoint) {
               throw new Error("등록된 API가 아니어서 저장할 수 없습니다.");
             }
@@ -195,6 +195,7 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
               description,
               editorType,
               configuration,
+              queryParams,
             });
             if (!result.ok) {
               throw new Error(formatSaveApiResponseUserError(result.error));

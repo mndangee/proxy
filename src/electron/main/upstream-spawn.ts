@@ -12,6 +12,10 @@ let upstreamSpawnLastStdoutLine = "";
 let upstreamSpawnLastStderrLine = "";
 const upstreamSpawnStderrTail: StderrTailRef = { s: "" };
 
+function quoteShellArgument(value: string): string {
+  return process.platform === "win32" ? `"${value.replace(/"/g, '""')}"` : `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
 export type UpstreamSpawnStatus = { running: boolean; lastError?: string };
 
 export function getUpstreamSpawnStatus(): UpstreamSpawnStatus {
@@ -31,9 +35,15 @@ export function stopUpstreamSpawn(): void {
   upstreamChild = null;
   if (!c || c.killed) return;
   try {
-    c.kill("SIGTERM");
+    if (process.platform === "win32" && c.pid) {
+      spawn("taskkill", ["/pid", String(c.pid), "/t"], { stdio: "ignore", windowsHide: true });
+    } else if (c.pid) {
+      process.kill(-c.pid, "SIGTERM");
+    } else {
+      c.kill("SIGTERM");
+    }
   } catch {
-    /* ignore */
+    try { c.kill("SIGTERM"); } catch { /* ignore */ }
   }
 }
 
@@ -65,12 +75,6 @@ export async function applyUpstreamSpawnFromConfig(): Promise<void> {
   }
 
   const dir = expandConfigPath(dirRaw);
-  const serverJs = join(dir, "dummy.server.js");
-  if (!existsSync(serverJs)) {
-    upstreamSpawnLastError = `자동 실행은 이 폴더에 dummy.server.js 가 있을 때만 지원합니다: ${serverJs} (npm 전용 프로젝트는 터미널에서 upstream 포트로 실행)`;
-    return;
-  }
-
   const upstreamPort = Math.min(65535, Math.max(1, Math.floor(ig.upstreamPort)));
 
   const nodeBinRaw = (ps.upstreamNodePath ?? "").trim();
@@ -86,15 +90,43 @@ export async function applyUpstreamSpawnFromConfig(): Promise<void> {
       : 7779;
   const injectDataforgeProxy = clientPort !== upstreamPort;
 
-  const child = spawn(nodeBin, ["dummy.server.js", "-port", String(upstreamPort)], {
-    cwd: dir,
-    env: {
-      ...process.env,
-      ...(injectDataforgeProxy ? { DATAFORGE_GATEWAY_ENABLED: "1", DATAFORGE_GATEWAY_PORT: String(clientPort) } : {}),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  const env = {
+    ...process.env,
+    PORT: String(upstreamPort),
+    ...(injectDataforgeProxy ? { DATAFORGE_GATEWAY_ENABLED: "1", DATAFORGE_GATEWAY_PORT: String(clientPort) } : {}),
+  };
+  const cmdRaw = (ps.upstreamServerCommand ?? "").trim();
+  let child: ChildProcess;
+  if (cmdRaw) {
+    const isDirectDummyServer = /^\s*(?:node|\{\{\s*node\s*\}\})\s+dummy\.server\.js(?:\s|$)/i.test(cmdRaw);
+    if (isDirectDummyServer) {
+      child = spawn(nodeBin, ["dummy.server.js", "-port", String(upstreamPort)], {
+        cwd: dir,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        detached: process.platform !== "win32",
+      });
+    } else {
+    const nodeForShell = quoteShellArgument(nodeBin);
+    let command = cmdRaw.replace(/\{\{\s*port\s*\}\}/gi, String(upstreamPort)).replace(/\{\{\s*node\s*\}\}/gi, nodeForShell);
+    // 이전 버전에서 자동 저장한 `node dummy.server.js`도 선택된 Node 버전을 사용하도록 보정한다.
+    command = command.replace(/^\s*node(?=\s+dummy\.server\.js\b)/i, nodeForShell);
+    if (process.platform === "win32") {
+      const comSpec = process.env.ComSpec?.trim() || join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
+      child = spawn(comSpec, ["/d", "/s", "/c", command], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    } else {
+      child = spawn("sh", ["-lc", command], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: true });
+    }
+    }
+  } else {
+    const serverJs = join(dir, "dummy.server.js");
+    if (!existsSync(serverJs)) {
+      upstreamSpawnLastError = `업스트림 자동 실행: 실행 명령을 입력하거나 기본 엔트리 파일을 준비해 주세요: ${serverJs}`;
+      return;
+    }
+    child = spawn(nodeBin, ["dummy.server.js", "-port", String(upstreamPort)], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, detached: process.platform !== "win32" });
+  }
 
   upstreamChild = child;
 

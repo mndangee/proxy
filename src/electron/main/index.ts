@@ -3,9 +3,17 @@ import { app, shell, BrowserWindow, ipcMain } from "electron";
 import { join } from "path";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 
-import { stopInterceptGatewayServer } from "./intercept-gateway";
+import {
+  flushProxyRequestHistory,
+  initializeProxyRequestHistory,
+  stopInterceptGatewayServer,
+} from "./intercept-gateway";
 import { applyMockProxyFromConfig, registerMockProxyIpc, stopMockProxyServer } from "./mock-proxy-server";
-import { registerProjectFsIpc } from "./project-fs";
+import { disableProxyConfigAfterCrashRecovery, registerProjectFsIpc } from "./project-fs";
+import { restoreActiveProxyTakeover, restorePendingProxyTakeoverOnStartup } from "./proxy-port-takeover";
+
+let quitCleanupStarted = false;
+let quitCleanupFinished = false;
 
 function createWindow(): void {
   // Create the browser window.
@@ -41,7 +49,7 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Set app user model id for windows
   electronApp.setAppUserModelId("com.electron");
 
@@ -58,7 +66,14 @@ app.whenReady().then(() => {
   /** IPC는 app.ready 이후에만 등록(Electron 버전에 따른 핸들러 유실 방지) */
   registerProjectFsIpc();
   registerMockProxyIpc();
-  void applyMockProxyFromConfig();
+  await initializeProxyRequestHistory();
+  const crashRecovery = await restorePendingProxyTakeoverOnStartup();
+  if (!crashRecovery.ok || crashRecovery.restored) {
+    await disableProxyConfigAfterCrashRecovery().catch((error) => console.error("[startup-recovery] failed to disable proxy config:", error));
+    if (!crashRecovery.ok) console.error("[startup-recovery]", crashRecovery.error);
+  } else {
+    void applyMockProxyFromConfig();
+  }
 
   createWindow();
 
@@ -78,9 +93,27 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
-  void stopMockProxyServer();
-  void stopInterceptGatewayServer();
+app.on("before-quit", (event) => {
+  if (quitCleanupFinished) return;
+  event.preventDefault();
+  if (quitCleanupStarted) return;
+  quitCleanupStarted = true;
+
+  void (async () => {
+    try {
+      // 원래 포트를 복구하기 전에 DataForge가 점유한 포트와 관리 서버를 모두 정리한다.
+      await stopInterceptGatewayServer();
+      await stopMockProxyServer();
+      await flushProxyRequestHistory();
+      const restored = await restoreActiveProxyTakeover();
+      if (!restored.ok) console.error("[app-quit] failed to restore the original project server:", restored.error);
+    } catch (error) {
+      console.error("[app-quit] proxy cleanup failed:", error);
+    } finally {
+      quitCleanupFinished = true;
+      app.quit();
+    }
+  })();
 });
 
 // In this file you can include the rest of your app's specific main process

@@ -71,31 +71,23 @@ function parseTopLevelJsonInterfaces(source: string): SfdCareInterface[] {
   return out;
 }
 
-function parseTranFirstJsPattern(source: string): SfdCareInterface[] {
+/**
+ * JS 객체 리터럴의 필드 순서나 중간 속성 유무와 관계없이 엔트리를 읽는다.
+ * 예: `getList: { method: 'POST', tranId: 'VD.X', timeout: 3, desc: '목록' }`
+ */
+function parseJsObjectLiteralInterfaces(source: string): SfdCareInterface[] {
   const out: SfdCareInterface[] = [];
-  const re =
-    /(\b[a-zA-Z_$][\w$]*)\s*:\s*\{\s*tranId\s*:\s*(['"])((?:\\.|(?!\2).)*?)\2\s*,\s*desc\s*:\s*(['"])((?:\\.|(?!\4).)*?)\4/g;
+  const re = /(\b[a-zA-Z_$][\w$]*)\s*:\s*\{([^{}]*)\}/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) {
+    const body = m[2];
+    const tran = /\b(?:tranId|tran_id)\s*:\s*(['"])((?:\\.|(?!\1).)*?)\1/.exec(body);
+    if (!tran) continue;
+    const description = /\b(?:desc|description)\s*:\s*(['"])((?:\\.|(?!\1).)*?)\1/.exec(body);
     out.push({
       key: m[1],
-      tranId: unescapeJsString(m[3]),
-      desc: unescapeJsString(m[5]),
-    });
-  }
-  return out;
-}
-
-function parseDescFirstJsPattern(source: string): SfdCareInterface[] {
-  const out: SfdCareInterface[] = [];
-  const re =
-    /(\b[a-zA-Z_$][\w$]*)\s*:\s*\{\s*desc\s*:\s*(['"])((?:\\.|(?!\2).)*?)\2\s*,\s*tranId\s*:\s*(['"])((?:\\.|(?!\4).)*?)\4/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) {
-    out.push({
-      key: m[1],
-      tranId: unescapeJsString(m[5]),
-      desc: unescapeJsString(m[3]),
+      tranId: unescapeJsString(tran[2]),
+      desc: description ? unescapeJsString(description[2]) : "",
     });
   }
   return out;
@@ -109,8 +101,7 @@ function parseDescFirstJsPattern(source: string): SfdCareInterface[] {
 export function parseSfdModuleInterfaces(source: string): SfdCareInterface[] {
   const chunks: SfdCareInterface[] = [
     ...parseTopLevelJsonInterfaces(source),
-    ...parseTranFirstJsPattern(source),
-    ...parseDescFirstJsPattern(source),
+    ...parseJsObjectLiteralInterfaces(source),
   ];
   return mergeByTranIdFirstWins(chunks);
 }

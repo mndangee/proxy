@@ -22,6 +22,7 @@ import { getProjectBySlug, getProjectRouteSlug } from "@/libs/datadummy/home";
 import {
   formatAddApiUserError,
   getEndpointsForProject,
+  getSavedApiResponsesForProjectApi,
   importProjectApisFromJsonPick,
   PROJECT_APIS_CHANGED_EVENT,
   refreshProjectApisFromDisk,
@@ -94,9 +95,16 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
     return endpoints.filter((e) => {
       const name = (e.name ?? "").toLowerCase();
       const tran = (e.tran ?? "").toLowerCase();
-      return name.includes(q) || tran.includes(q);
+      const description = (e.description ?? "").toLowerCase();
+      const responseText = getSavedApiResponsesForProjectApi(project.id, e.name)
+        .map((response) =>
+          [response.label, response.description, ...Object.entries(response.queryParams ?? {}).flat()].join(" "),
+        )
+        .join(" ")
+        .toLowerCase();
+      return name.includes(q) || tran.includes(q) || description.includes(q) || responseText.includes(q);
     });
-  }, [endpoints, apiSearchQuery]);
+  }, [endpoints, apiSearchQuery, project.id, listTick]);
   const currentProjectSlug = projectSlug ?? getProjectRouteSlug(project);
 
   const handleImportApiJson = useCallback(async () => {
@@ -193,7 +201,7 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
           {endpoints.length > 0 ? (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <div className="mb-5 flex justify-end">
-                <Input value={apiSearchQuery} onChange={(e) => setApiSearchQuery(e.target.value)} placeholder="API 이름 또는 트랜 이름 검색" size="medium" width="360px" />
+                <Input value={apiSearchQuery} onChange={(e) => setApiSearchQuery(e.target.value)} placeholder="트랜, 설명, 응답 조건 검색" size="medium" width="360px" />
               </div>
               {filteredEndpoints.length === 0 ? (
                 <p className="typo-body-2-normal text-label-assistant shrink-0 py-10 text-center">검색과 일치하는 API가 없습니다.</p>

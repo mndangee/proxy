@@ -1,4 +1,5 @@
 import http from "node:http";
+import net from "node:net";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +11,13 @@ import { applyCareMockSpawnFromConfig, getCareMockSpawnStatus, stopCareMockSpawn
 import { getUpstreamSpawnStatus, type UpstreamSpawnStatus } from "./upstream-spawn";
 import {
   applyInterceptGatewayFromConfig,
+  clearRecentProxyRequests,
   getInterceptGatewayStatus,
+  getRecentProxyRequests,
   type InterceptGatewayStatus,
 } from "./intercept-gateway";
 import { tryParseApiResponseExportBundle } from "@/libs/datadummy/api";
+import { hasActiveProxyTakeover } from "./proxy-port-takeover";
 import {
   isInterceptGatewayMockPortCollision,
   isInterceptGatewayMockUpstreamCollision,
@@ -25,11 +29,18 @@ import {
   type ProjectManifest,
 } from "./project-fs";
 
-type StoreRow = { value?: string; configuration: string; editorType: string };
+type StoreRow = {
+  value?: string;
+  label?: string;
+  configuration: string;
+  editorType: string;
+  queryParams?: Record<string, string>;
+};
 
 let activeServer: http.Server | null = null;
 let activePort: number | null = null;
 let lastError: string | undefined;
+let applyQueue: Promise<void> = Promise.resolve();
 
 export function getMockProxyStatus(): {
   listening: boolean;
@@ -51,7 +62,107 @@ export function getMockProxyStatus(): {
 
 export function registerMockProxyIpc(): void {
   ipcMain.removeHandler("mock-proxy:status");
+  ipcMain.removeHandler("mock-proxy:diagnostics");
+  ipcMain.removeHandler("mock-proxy:recentRequests");
+  ipcMain.removeHandler("mock-proxy:clearRecentRequests");
   ipcMain.handle("mock-proxy:status", () => getMockProxyStatus());
+  ipcMain.handle("mock-proxy:diagnostics", () => getMockProxyDiagnostics());
+  ipcMain.handle("mock-proxy:recentRequests", () => getRecentProxyRequests());
+  ipcMain.handle("mock-proxy:clearRecentRequests", async () => {
+    await clearRecentProxyRequests();
+    return { ok: true };
+  });
+}
+
+export type ProxyDiagnosticState = "healthy" | "checking" | "error" | "inactive";
+export type ProxyDiagnosticStep = {
+  state: ProxyDiagnosticState;
+  title: string;
+  detail: string;
+  port?: number;
+  solution?: string;
+};
+
+function canConnectTcp(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let settled = false;
+    const finish = (connected: boolean): void => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(700);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
+export async function getMockProxyDiagnostics(): Promise<{
+  overall: ProxyDiagnosticState;
+  summary: string;
+  steps: {
+    requestConnection: ProxyDiagnosticStep;
+    dummyServer: ProxyDiagnosticStep;
+    projectServer: ProxyDiagnosticStep;
+    autoRestore: ProxyDiagnosticStep;
+  };
+}> {
+  const config = await readAppProxyConfigDisk();
+  const status = getMockProxyStatus();
+  const gateway = config.interceptGateway;
+  const enabled = Boolean(gateway?.enabled && config.proxyServer.enabled);
+  const upstreamPort = gateway?.upstreamPort ?? config.proxyServer.upstreamServerPort ?? 7778;
+  const upstreamReachable = enabled ? await canConnectTcp(upstreamPort) : false;
+  const upstreamError = status.upstreamSpawn.lastError || status.careMockSpawn.lastError;
+  const upstreamManaged = Boolean(gateway?.autoStartUpstream || config.proxyServer.upstreamAutoStart);
+  const upstreamProcessRunning = status.upstreamSpawn.running || status.careMockSpawn.running;
+
+  const requestConnection: ProxyDiagnosticStep = !enabled
+    ? { state: "inactive", title: "프로젝트 요청", detail: "아직 연결을 시작하지 않았습니다.", port: gateway?.clientPort }
+    : status.interceptGateway.listening
+      ? { state: "healthy", title: "프로젝트 요청", detail: "프로젝트 요청을 DataForge가 받고 있습니다.", port: status.interceptGateway.port ?? gateway?.clientPort }
+      : { state: "error", title: "프로젝트 요청", detail: "현재 서버 포트에서 요청을 받을 수 없습니다.", port: gateway?.clientPort, solution: "해당 포트를 사용하는 프로그램을 확인한 뒤 다시 연결해 주세요." };
+  const dummyServer: ProxyDiagnosticStep = !enabled
+    ? { state: "inactive", title: "더미 응답", detail: "연결을 시작하면 자동으로 준비됩니다.", port: config.proxyServer.port }
+    : status.listening
+      ? { state: "healthy", title: "더미 응답", detail: "저장된 응답을 사용할 준비가 됐습니다.", port: status.port ?? config.proxyServer.port }
+      : { state: "error", title: "더미 응답", detail: "DataForge 내부 서버를 시작하지 못했습니다.", port: config.proxyServer.port, solution: "추가 설정에서 DataForge 내부 포트를 변경해 보세요." };
+  const projectServer: ProxyDiagnosticStep = !enabled
+    ? { state: "inactive", title: "프로젝트 서버", detail: "연결을 시작하면 서버 상태를 확인합니다.", port: upstreamPort }
+    : upstreamReachable
+      ? { state: "healthy", title: "프로젝트 서버", detail: "더미가 없는 요청을 실제 서버로 전달할 수 있습니다.", port: upstreamPort }
+    : upstreamManaged && upstreamError
+        ? { state: "error", title: "프로젝트 서버", detail: "프로젝트 서버를 실행하지 못했습니다.", port: upstreamPort, solution: upstreamError }
+        : upstreamManaged && upstreamProcessRunning
+          ? { state: "checking", title: "프로젝트 서버", detail: "서버가 응답할 때까지 확인하고 있습니다.", port: upstreamPort, solution: "계속 연결되지 않으면 서버 코드 폴더와 실행 방법을 확인해 주세요." }
+          : upstreamManaged
+            ? { state: "error", title: "프로젝트 서버", detail: "서버 이동 포트에 연결할 수 없습니다.", port: upstreamPort, solution: "서버 코드 폴더와 감지된 실행 방법을 확인해 주세요." }
+            : { state: "inactive", title: "프로젝트 서버", detail: "실제 서버는 연결되지 않았습니다. 저장된 더미 응답만 사용할 수 있습니다.", port: upstreamPort, solution: `실제 서버 응답도 필요하면 프로젝트 서버를 ${upstreamPort} 포트로 실행해 주세요.` };
+  const autoRestore: ProxyDiagnosticStep = hasActiveProxyTakeover()
+    ? { state: "healthy", title: "원래 서버 복구", detail: "연결을 끊거나 앱을 종료하면 원래 포트로 복구합니다.", port: gateway?.clientPort }
+    : { state: "inactive", title: "원래 서버 복구", detail: "DataForge가 종료한 기존 서버가 없습니다.", port: gateway?.clientPort };
+
+  const required = upstreamManaged ? [requestConnection, dummyServer, projectServer] : [requestConnection, dummyServer];
+  const overall: ProxyDiagnosticState = required.some((step) => step.state === "error")
+    ? "error"
+    : required.some((step) => step.state === "checking")
+      ? "checking"
+      : required.every((step) => step.state === "healthy")
+        ? "healthy"
+        : "inactive";
+  const summary = overall === "healthy"
+    ? upstreamReachable
+      ? "저장된 응답이 있으면 더미를 사용하고, 없으면 프로젝트 서버로 전달합니다."
+      : "저장된 더미 응답만 사용할 수 있습니다. 저장되지 않은 요청은 실제 서버로 전달할 수 없습니다."
+    : overall === "checking"
+      ? "프로젝트 서버 연결을 확인하고 있습니다."
+      : overall === "error"
+        ? "연결에 확인이 필요한 항목이 있습니다."
+        : "더미 응답이 아직 연결되지 않았습니다.";
+  return { overall, summary, steps: { requestConnection, dummyServer, projectServer, autoRestore } };
 }
 
 export async function stopMockProxyServer(): Promise<void> {
@@ -305,23 +416,50 @@ function normalizeConfigurationForMock(raw: string): string | null {
   return trimmed;
 }
 
-function pickConfiguration(rows: StoreRow[] | undefined, active?: MockActiveApiResponseRef | null): string | null {
+function queryConditionCount(row: StoreRow): number {
+  if (!row.queryParams || typeof row.queryParams !== "object" || Array.isArray(row.queryParams)) return 0;
+  return Object.entries(row.queryParams).filter(([key, value]) => key.trim() && typeof value === "string").length;
+}
+
+function rowMatchesQuery(row: StoreRow, searchParams: URLSearchParams): boolean {
+  if (!row.queryParams || typeof row.queryParams !== "object" || Array.isArray(row.queryParams)) return false;
+  const entries = Object.entries(row.queryParams).filter(([key, value]) => key.trim() && typeof value === "string");
+  if (entries.length === 0) return false;
+  return entries.every(([key, value]) => searchParams.getAll(key.trim()).includes(value));
+}
+
+type PickedConfiguration = { configuration: string; label?: string; value?: string; editorType: string; apiName?: string };
+
+function pickConfiguration(
+  rows: StoreRow[] | undefined,
+  active: MockActiveApiResponseRef | null | undefined,
+  searchParams: URLSearchParams,
+): PickedConfiguration | null {
   if (!rows?.length) return null;
+
+  const matched = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => rowMatchesQuery(row, searchParams))
+    .sort((a, b) => queryConditionCount(b.row) - queryConditionCount(a.row) || a.index - b.index);
+  for (const { row } of matched) {
+    const configuration = normalizeConfigurationForMock(row.configuration);
+    if (configuration) return { configuration, label: row.label, value: row.value, editorType: row.editorType };
+  }
+
+  // 조건부 응답은 조건이 맞지 않을 때 활성/기본 폴백 후보로 사용하지 않습니다.
+  const fallbackRows = rows.filter((row) => queryConditionCount(row) === 0);
+  if (fallbackRows.length === 0) return null;
   const responseValue = active?.responseValue?.trim();
   if (responseValue) {
-    const byValue = rows.find((r) => (r.value ?? "").trim() === responseValue);
+    const byValue = fallbackRows.find((r) => (r.value ?? "").trim() === responseValue);
     const fromValue = byValue ? normalizeConfigurationForMock(byValue.configuration) : null;
-    if (fromValue) return fromValue;
+    if (fromValue && byValue) return { configuration: fromValue, label: byValue.label, value: byValue.value, editorType: byValue.editorType };
   }
-  const editorType = active?.editorType;
-  if (editorType === "default" || editorType === "test" || editorType === "error") {
-    const byType = rows.find((r) => r.editorType === editorType);
-    const fromType = byType ? normalizeConfigurationForMock(byType.configuration) : null;
-    if (fromType) return fromType;
-  }
-  const def = rows.find((r) => r.editorType === "default");
-  const fallback = def ?? rows[0];
-  return fallback ? normalizeConfigurationForMock(fallback.configuration) : null;
+  const def = fallbackRows.find((r) => r.editorType === "default");
+  const fallback = def ?? fallbackRows[0];
+  if (!fallback) return null;
+  const configuration = normalizeConfigurationForMock(fallback.configuration);
+  return configuration ? { configuration, label: fallback.label, value: fallback.value, editorType: fallback.editorType } : null;
 }
 
 /** tran·별칭으로 들어온 요청에 대해 API 이름에 저장된 활성 응답을 찾음 */
@@ -403,7 +541,8 @@ async function findRawConfigurationFromProjects(
   pathKey: string,
   tranAliases?: Record<string, string>,
   activeByApiName?: Record<string, MockActiveApiResponseRef>,
-): Promise<string | null> {
+  searchParams: URLSearchParams = new URLSearchParams(),
+): Promise<PickedConfiguration | null> {
   const pathVariants = expandMockPathKeys(pathKey, tranAliases);
   if (pathVariants.size === 0) return null;
 
@@ -437,8 +576,8 @@ async function findRawConfigurationFromProjects(
       for (const projectRoot of projectRoots) {
         const store = await readResponsesStoreFromDisk(projectRoot);
         const rows = store.byApiName[k] as StoreRow[] | undefined;
-        const picked = pickConfiguration(rows, resolvedActive);
-        if (picked != null) return picked;
+        const picked = pickConfiguration(rows, resolvedActive, searchParams);
+        if (picked != null) return { ...picked, apiName: k };
       }
     }
   }
@@ -448,8 +587,8 @@ async function findRawConfigurationFromProjects(
     for (const projectRoot of projectRoots) {
       const store = await readResponsesStoreFromDisk(projectRoot);
       const rows = store.byApiName[k] as StoreRow[] | undefined;
-      const picked = pickConfiguration(rows, undefined);
-      if (picked != null) return picked;
+      const picked = pickConfiguration(rows, undefined, searchParams);
+      if (picked != null) return { ...picked, apiName: k };
     }
   }
   return null;
@@ -552,12 +691,14 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
 
   const tranAliases = diskCfg.mockTranAliases;
 
-  let rawConfig: string | null = await findRawConfigurationFromProjects(
+  const pickedConfig = await findRawConfigurationFromProjects(
     projectRoots,
     lookupKey,
     tranAliases,
     diskCfg.mockActiveApiResponses,
+    searchParams,
   );
+  let rawConfig: string | null = pickedConfig?.configuration ?? null;
 
   if (rawConfig == null) {
     const mobilityPath = diskCfg.proxyServer.careDummyMobilityPath;
@@ -589,17 +730,30 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
 
   await sleepMs(await resolveMockLatencyMs(diskCfg, lookupKey, projectRoots));
 
+  const selectionHeaders = pickedConfig
+    ? {
+        "X-DataForge-Response-Label": encodeURIComponent(pickedConfig.label || pickedConfig.editorType),
+        "X-DataForge-Response-Value": encodeURIComponent(pickedConfig.value || ""),
+        "X-DataForge-Api-Name": encodeURIComponent(pickedConfig.apiName || lookupKey),
+        "X-DataForge-Editor-Type": pickedConfig.editorType,
+      }
+    : {
+        "X-DataForge-Response-Label": "Default",
+        "X-DataForge-Api-Name": encodeURIComponent(lookupKey),
+        "X-DataForge-Editor-Type": "default",
+      };
+
   if (profile === "legacy-tran-envelope" && envelopeTranId) {
-    res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", ...cors });
+    res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8", ...cors, ...selectionHeaders });
     res.end(wrapEnvelopeResponse(envelopeTranId, parsed));
     return;
   }
 
-  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", ...cors });
+  res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", ...cors, ...selectionHeaders });
   res.end(body);
 }
 
-export async function applyMockProxyFromConfig(): Promise<void> {
+async function applyMockProxyFromConfigNow(): Promise<void> {
   lastError = undefined;
   await stopMockProxyServer();
   const config = await readAppProxyConfigDisk();
@@ -613,7 +767,15 @@ export async function applyMockProxyFromConfig(): Promise<void> {
     const port = config.proxyServer.port;
 
     const server = http.createServer((req, res) => {
-      void handleMockRequest(req, res);
+      void handleMockRequest(req, res).catch((err: unknown) => {
+        lastError = err instanceof Error ? err.message : String(err);
+        if (res.headersSent) {
+          res.destroy();
+          return;
+        }
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("mock proxy request failed");
+      });
     });
 
     try {
@@ -639,4 +801,11 @@ export async function applyMockProxyFromConfig(): Promise<void> {
 
   await applyInterceptGatewayFromConfig();
   await applyCareMockSpawnFromConfig(Boolean(activeServer?.listening));
+}
+
+/** 설정 저장이 연속으로 발생해도 서버 stop/listen 작업이 서로 겹치지 않도록 직렬화합니다. */
+export function applyMockProxyFromConfig(): Promise<void> {
+  const next = applyQueue.then(applyMockProxyFromConfigNow, applyMockProxyFromConfigNow);
+  applyQueue = next.catch(() => {});
+  return next;
 }

@@ -55,6 +55,8 @@ export interface ITableProps {
   bodyRowClassName?: string;
   /** Sticky table header when scrolling */
   stickyHeader?: boolean;
+  /** 행 바로 아래에 펼쳐지는 추가 내용. null이면 표시하지 않음 */
+  renderExpandedRow?: (row: any, rowIndex: number) => ReactNode;
 }
 
 export interface IFetchOption extends RequestInit {

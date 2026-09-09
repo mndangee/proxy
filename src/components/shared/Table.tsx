@@ -1,5 +1,7 @@
 "use client";
 
+import { Fragment } from "react";
+
 // Components
 import CheckBox from "@/components/common/CheckBox";
 
@@ -38,30 +40,36 @@ export default function Table(props: ITableProps) {
 
       {/* table body */}
       <div className="flex flex-col">
-        {props.data.map((bodyItem, bodyIdx) => (
-          <div key={`table-body-${bodyItem?.id ?? bodyIdx}`} className={`${props.hasInput && "!border-0 !py-0 last:!border-b-1"} ${bodyRowClass}`}>
-            {props.hasCheckBox && props.checkBoxStateList && props.setCheckBoxStateList && (
-              <CheckBox
-                className={`${props.hasInput && "border-y-stroke-dark border-t-1 last:border-b-1"} h-10 w-11 py-4`}
-                value={props.getCheckBoxRowValue ? props.getCheckBoxRowValue(bodyItem, bodyIdx) : bodyIdx}
-                checkBoxStateList={props.checkBoxStateList}
-                setCheckBoxStateList={props.setCheckBoxStateList}
-              />
-            )}
-            {props.header.map((headerItem, headerIdx) => (
-              <div
-                key={`table-body-data-${headerItem}-${headerIdx}`}
-                className={`px-5 ${headerItem.cellClassName ?? ""}`}
-                style={{
-                  width: headerItem.width,
-                  textAlign: headerItem.textAlign ? headerItem.textAlign : "center",
-                }}
-              >
-                {headerItem.render != null ? headerItem.render(bodyItem, bodyIdx) : (bodyItem[headerItem.value] ?? "-")}
+        {props.data.map((bodyItem, bodyIdx) => {
+          const expanded = props.renderExpandedRow?.(bodyItem, bodyIdx);
+          return (
+            <Fragment key={`table-body-${bodyItem?.id ?? bodyIdx}`}>
+              <div className={`${props.hasInput && "!border-0 !py-0 last:!border-b-1"} ${bodyRowClass}`}>
+                {props.hasCheckBox && props.checkBoxStateList && props.setCheckBoxStateList && (
+                  <CheckBox
+                    className={`${props.hasInput && "border-y-stroke-dark border-t-1 last:border-b-1"} h-10 w-11 py-4`}
+                    value={props.getCheckBoxRowValue ? props.getCheckBoxRowValue(bodyItem, bodyIdx) : bodyIdx}
+                    checkBoxStateList={props.checkBoxStateList}
+                    setCheckBoxStateList={props.setCheckBoxStateList}
+                  />
+                )}
+                {props.header.map((headerItem, headerIdx) => (
+                  <div
+                    key={`table-body-data-${headerItem.value}-${headerIdx}`}
+                    className={`px-5 ${headerItem.cellClassName ?? ""}`}
+                    style={{
+                      width: headerItem.width,
+                      textAlign: headerItem.textAlign ? headerItem.textAlign : "center",
+                    }}
+                  >
+                    {headerItem.render != null ? headerItem.render(bodyItem, bodyIdx) : (bodyItem[headerItem.value] ?? "-")}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        ))}
+              {expanded ? <div className="border-b border-gray-100">{expanded}</div> : null}
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
