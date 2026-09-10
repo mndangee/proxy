@@ -145,6 +145,7 @@ export interface ProjectManifest {
   isFavorite: boolean;
   folderName: string;
   linkedClients?: LinkedClientEntry[];
+  apiMetadataSources?: string[];
 }
 
 function slugify(name: string): string {
@@ -311,6 +312,9 @@ function manifestFromJsonFilePayload(data: unknown): ProjectManifest | null {
   const folderNameRaw = typeof d.folderName === "string" ? d.folderName.trim() : "";
   const folderName = folderNameRaw || slugify(d.name) || "project";
   const linkedClients = coerceLinkedClients(d.linkedClients);
+  const apiMetadataSources = Array.isArray(d.apiMetadataSources)
+    ? [...new Set(d.apiMetadataSources.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))]
+    : [];
   const base: ProjectManifest = {
     version: PROJECT_MANIFEST_VERSION,
     id: d.id,
@@ -321,7 +325,11 @@ function manifestFromJsonFilePayload(data: unknown): ProjectManifest | null {
     isFavorite,
     folderName,
   };
-  return linkedClients?.length ? { ...base, linkedClients } : base;
+  return {
+    ...base,
+    ...(linkedClients?.length ? { linkedClients } : {}),
+    ...(apiMetadataSources.length ? { apiMetadataSources } : {}),
+  };
 }
 
 function getAppProxyConfigPath(): string {
@@ -897,6 +905,12 @@ type ImportSummary = {
   apiCount: number;
   responseCount: number;
   skippedFileCount: number;
+  defaultCount: number;
+  testCount: number;
+  errorCount: number;
+  metadataMappedApiCount: number;
+  metadataUnmappedApiCount: number;
+  metadataUnmappedTrans: string[];
 };
 
 type ServerDumpFileMeta = { tran: string; sourceId: string; label: string };
@@ -1152,7 +1166,7 @@ function inferImportedJsonApiMeta(
   fallbackApiKey: string,
   fallbackDescription: string,
   careLookup?: Map<string, SfdCareInterface> | null,
-): { apiKey: string; tran: string; description: string } {
+): { apiKey: string; tran: string; description: string; metadataMatched: boolean } {
   const fromBody = parseSfdModuleInterfaces(raw);
   const bodyPick = pickInterfaceForFileStem(fromBody, fallbackApiKey);
   if (bodyPick) {
@@ -1160,7 +1174,7 @@ function inferImportedJsonApiMeta(
     const tran = bodyPick.tranId.trim() || fallbackApiKey.trim();
     const desc = bodyPick.desc.trim() || fallbackDescription;
     if (name && isSafeProjectFolderName(name)) {
-      return { apiKey: name, tran, description: desc };
+      return { apiKey: name, tran, description: desc, metadataMatched: true };
     }
   }
   if (careLookup && careLookup.size > 0) {
@@ -1170,7 +1184,7 @@ function inferImportedJsonApiMeta(
       const tran = care.tranId.trim() || fallbackApiKey.trim();
       const desc = care.desc.trim() || fallbackDescription;
       if (name && isSafeProjectFolderName(name)) {
-        return { apiKey: name, tran, description: desc };
+        return { apiKey: name, tran, description: desc, metadataMatched: true };
       }
     }
   }
@@ -1179,6 +1193,7 @@ function inferImportedJsonApiMeta(
     apiKey: fb,
     tran: fb,
     description: fallbackDescription,
+    metadataMatched: false,
   };
 }
 
@@ -1422,6 +1437,8 @@ async function importLooseJsonFolderAsProject(
   const serverDumpFiles = nestedPlan.length === 0 ? detectServerDumpFiles(rootJsonNames) : null;
   let skippedFileCount = 0;
   let importedResponseCount = 0;
+  let metadataMappedApiCount = 0;
+  const metadataUnmappedTrans: string[] = [];
 
   for (const { folderName: subFolder, fileNames } of nestedPlan) {
     const folderStem = subFolder.trim();
@@ -1429,7 +1446,7 @@ async function importLooseJsonFolderAsProject(
 
     const responses: ApiResponseRowDisk[] = [];
     const sourcePaths: string[] = [];
-    let folderMeta: { apiKey: string; tran: string; description: string } | null = null;
+    let folderMeta: { apiKey: string; tran: string; description: string; metadataMatched: boolean } | null = null;
     const sortedNames = [...fileNames].sort((a, b) => a.localeCompare(b));
     for (const fileName of sortedNames) {
       const abs = join(sourceDir, subFolder, fileName);
@@ -1485,6 +1502,8 @@ async function importLooseJsonFolderAsProject(
       updatedAt: apiUpdatedIso,
     });
     byApiName[apiKey] = labelSingleDefaultResponse(responses, meta.description);
+    if (meta.metadataMatched) metadataMappedApiCount += 1;
+    else metadataUnmappedTrans.push(meta.tran);
   }
 
   if (serverDumpFiles) {
@@ -1548,6 +1567,8 @@ async function importLooseJsonFolderAsProject(
       });
       byApiName[mappedApiName] = labelSingleDefaultResponse(responses, mappedDescription);
       usedApiKeys.add(mappedApiName);
+      if (care) metadataMappedApiCount += 1;
+      else metadataUnmappedTrans.push(mappedTran);
     }
   }
 
@@ -1595,6 +1616,8 @@ async function importLooseJsonFolderAsProject(
         updatedAt: rootMtimeIso,
       },
     ];
+    if (meta.metadataMatched) metadataMappedApiCount += 1;
+    else metadataUnmappedTrans.push(meta.tran);
     importedResponseCount += 1;
   }
 
@@ -1621,11 +1644,22 @@ async function importLooseJsonFolderAsProject(
     folderName,
   };
 
+  const rememberedMetadataFile = await readRememberedImportInterfaceFile();
+  if (rememberedMetadataFile) {
+    try {
+      const rememberedLookup = buildCareTranLookup(parseSfdModuleInterfaces(await fs.readFile(rememberedMetadataFile, "utf-8")));
+      if (items.some((item) => findCareForProxyApi(rememberedLookup, item))) {
+        manifest.apiMetadataSources = [rememberedMetadataFile];
+      }
+    } catch { /* 가져오기 자체는 API 정보 파일 상태와 분리 */ }
+  }
+
   await fs.writeFile(join(dest, "project.json"), JSON.stringify(manifest, null, 2), "utf-8");
   await writeApisIndex(dest, items);
   await writeApiResponsesStore(dest, byApiName);
   await enrichProjectApisFromNearbyInterfaceFiles(dest);
 
+  const responseTypeCounts = countResponseTypes(Object.values(byApiName).flat());
   return {
     ok: true,
     project: manifest,
@@ -1634,6 +1668,10 @@ async function importLooseJsonFolderAsProject(
       apiCount: items.length,
       responseCount: serverDumpFiles ? importedResponseCount : Object.values(byApiName).reduce((sum, rows) => sum + rows.length, 0),
       skippedFileCount,
+      ...responseTypeCounts,
+      metadataMappedApiCount,
+      metadataUnmappedApiCount: Math.max(0, items.length - metadataMappedApiCount),
+      metadataUnmappedTrans: [...new Set(metadataUnmappedTrans)].sort((a, b) => a.localeCompare(b)),
     },
   };
 }
@@ -1648,6 +1686,9 @@ export type ImportAnalysis = {
   testCount: number;
   errorCount: number;
   skippedFileCount: number;
+  metadataMappedApiCount?: number;
+  metadataUnmappedApiCount?: number;
+  metadataUnmappedTrans?: string[];
 };
 
 type ImportPlan = {
@@ -1918,6 +1959,7 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:addApi");
   ipcMain.removeHandler("project-fs:updateApi");
   ipcMain.removeHandler("project-fs:syncApisFromSfdModule");
+  ipcMain.removeHandler("project-fs:pickInterfaceDefinition");
   ipcMain.removeHandler("project-fs:deleteApi");
   ipcMain.removeHandler("project-fs:getResponsesStore");
   ipcMain.removeHandler("project-fs:upsertApiResponse");
@@ -1936,6 +1978,46 @@ export function registerProjectFsIpc(): void {
   ipcMain.handle("project-fs:pickServerDirectory", async () => {
     const result = await dialog.showOpenDialog({ title: "서버 프로젝트 폴더 선택", properties: ["openDirectory"] });
     return result.canceled || !result.filePaths[0] ? { ok: false as const, error: "cancelled" } : { ok: true as const, path: result.filePaths[0] };
+  });
+
+  ipcMain.handle("project-fs:pickInterfaceDefinition", async (_event, payload: unknown) => {
+    const value = payload && typeof payload === "object" ? payload as { folderName?: unknown; forcePick?: unknown } : {};
+    const folderName = typeof value.folderName === "string" ? value.folderName.trim() : "";
+    if (!folderName || !isSafeProjectFolderName(folderName)) return { ok: false as const, error: "invalid-folder" };
+    const projectRoot = join(getProjectsRoot(), folderName);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    if (value.forcePick !== true && manifest.apiMetadataSources?.length) {
+      const valid: string[] = [];
+      for (const path of manifest.apiMetadataSources) {
+        try {
+          const text = await fs.readFile(path, "utf-8");
+          if (parseSfdModuleInterfaces(text).length > 0) valid.push(path);
+        } catch { /* moved or deleted */ }
+      }
+      if (valid.length > 0) return { ok: true as const, paths: valid, remembered: true as const };
+    }
+
+    const result = await dialog.showOpenDialog({
+      title: "API 이름과 설명이 있는 파일 선택",
+      buttonLabel: "선택한 파일로 분석",
+      properties: ["openFile", "multiSelections"],
+      filters: [{ name: "JavaScript, TypeScript, JSON", extensions: ["js", "mjs", "cjs", "ts", "json"] }],
+    });
+    const selected = result.canceled ? [] : result.filePaths.map((path) => path.trim()).filter(Boolean);
+    if (selected.length === 0) return { ok: false as const, error: "cancelled" };
+    const valid: string[] = [];
+    for (const path of selected) {
+      try {
+        const text = await fs.readFile(path, "utf-8");
+        if (parseSfdModuleInterfaces(text).length > 0) valid.push(path);
+      } catch { /* reported below when none are usable */ }
+    }
+    if (valid.length === 0) return { ok: false as const, error: "no-interface-data" };
+    const nextManifest = { ...manifest, apiMetadataSources: valid, updatedAt: new Date().toISOString() };
+    await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+    return { ok: true as const, paths: valid, remembered: false as const };
   });
 
   ipcMain.handle("project-fs:detectServerCommand", async (_e, rawWorkdir: unknown) => {
@@ -2481,20 +2563,26 @@ export function registerProjectFsIpc(): void {
       const fname = typeof folderName === "string" ? folderName.trim() : "";
       if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
 
-      const absPath = typeof sfdPath === "string" ? sfdPath.trim() : "";
-      if (!absPath) return { ok: false as const, error: "empty-path" };
+      const sourcePaths = (Array.isArray(sfdPath) ? sfdPath : [sfdPath])
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (sourcePaths.length === 0) return { ok: false as const, error: "empty-path" };
 
       const root = getProjectsRoot();
       const projectRoot = join(root, fname);
       const manifest = await readManifest(projectRoot);
       if (!manifest) return { ok: false as const, error: "not-found" };
 
-      let text: string;
-      try {
-        text = await fs.readFile(absPath, "utf-8");
-      } catch {
-        return { ok: false as const, error: "read-failed" };
+      const sourceTexts: string[] = [];
+      for (const path of sourcePaths) {
+        try {
+          sourceTexts.push(await fs.readFile(path, "utf-8"));
+        } catch {
+          return { ok: false as const, error: `read-failed: ${path}` };
+        }
       }
+      const text = sourceTexts.join("\n");
 
       const careLookup = buildCareTranLookup(parseSfdModuleInterfaces(text));
       const items = await readApisIndex(projectRoot);
@@ -2503,6 +2591,7 @@ export function registerProjectFsIpc(): void {
       const now = new Date().toISOString();
       let updated = 0;
       const skipped: string[] = [];
+      const renamed = new Map<string, string>();
 
       for (let i = 0; i < items.length; i++) {
         const row = items[i]!;
@@ -2524,9 +2613,12 @@ export function registerProjectFsIpc(): void {
         if (oldName !== newName && Object.prototype.hasOwnProperty.call(nest, oldName)) {
           const moved = nest[oldName];
           if (moved != null && moved.length > 0) {
-            nest[newName] = [...moved, ...(nest[newName] ?? [])];
+            nest[newName] = labelSingleDefaultResponse([...moved, ...(nest[newName] ?? [])], newDesc);
           }
           delete nest[oldName];
+          renamed.set(oldName, newName);
+        } else if (Object.prototype.hasOwnProperty.call(nest, newName)) {
+          nest[newName] = labelSingleDefaultResponse(nest[newName] ?? [], newDesc);
         }
 
         items[i] = {
@@ -2543,6 +2635,15 @@ export function registerProjectFsIpc(): void {
         await writeApiResponsesStore(projectRoot, nest);
         const nextManifest: ProjectManifest = { ...manifest, updatedAt: now };
         await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify(nextManifest, null, 2), "utf-8");
+        if (renamed.size > 0) {
+          const config = await readAppProxyConfigDisk();
+          const active = { ...(config.mockActiveApiResponses ?? {}) };
+          for (const [oldName, newName] of renamed) {
+            if (active[oldName] && !active[newName]) active[newName] = active[oldName];
+            delete active[oldName];
+          }
+          await mergeAppProxyConfigDisk({ mockActiveApiResponses: active });
+        }
       }
 
       return { ok: true as const, updated, skipped };

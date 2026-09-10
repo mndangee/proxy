@@ -115,6 +115,8 @@ export interface Project {
   folderName?: string
   /** project.json — 이 응답 묶음을 사용할 외부 프로젝트 목록 */
   linkedClients?: LinkedClientEntry[]
+  /** API 이름·tranId·설명을 읽을 프로젝트별 JS/TS/JSON 파일 */
+  apiMetadataSources?: string[]
 }
 
 export interface Activity {

@@ -14,6 +14,8 @@ import { restoreActiveProxyTakeover, restorePendingProxyTakeoverOnStartup } from
 
 let quitCleanupStarted = false;
 let quitCleanupFinished = false;
+type StartupRecoveryNotice = { type: "success" | "error"; message: string };
+let startupRecoveryNotice: StartupRecoveryNotice | null = null;
 
 function createWindow(): void {
   // Create the browser window.
@@ -66,11 +68,25 @@ app.whenReady().then(async () => {
   /** IPC는 app.ready 이후에만 등록(Electron 버전에 따른 핸들러 유실 방지) */
   registerProjectFsIpc();
   registerMockProxyIpc();
+  ipcMain.removeHandler("proxy:get-startup-recovery-notice");
+  ipcMain.handle("proxy:get-startup-recovery-notice", () => {
+    const notice = startupRecoveryNotice;
+    startupRecoveryNotice = null;
+    return notice;
+  });
   await initializeProxyRequestHistory();
   const crashRecovery = await restorePendingProxyTakeoverOnStartup();
   if (!crashRecovery.ok || crashRecovery.restored) {
     await disableProxyConfigAfterCrashRecovery().catch((error) => console.error("[startup-recovery] failed to disable proxy config:", error));
-    if (!crashRecovery.ok) console.error("[startup-recovery]", crashRecovery.error);
+    if (!crashRecovery.ok) {
+      console.error("[startup-recovery]", crashRecovery.error);
+      startupRecoveryNotice = {
+        type: "error",
+        message: `프로젝트 서버를 자동으로 복구하지 못했습니다.\n\n${crashRecovery.error}\n\n프록시 설정에서 서버 폴더와 실행 방법을 확인한 뒤 다시 연결해 주세요.`,
+      };
+    } else {
+      startupRecoveryNotice = { type: "success", message: "이전에 전환했던 프로젝트 서버를 원래 포트로 복구했습니다." };
+    }
   } else {
     void applyMockProxyFromConfig();
   }

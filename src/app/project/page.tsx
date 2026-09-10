@@ -24,6 +24,7 @@ import {
   getEndpointsForProject,
   getSavedApiResponsesForProjectApi,
   importProjectApisFromJsonPick,
+  reanalyzeProjectApiMetadata,
   PROJECT_APIS_CHANGED_EVENT,
   refreshProjectApisFromDisk,
 } from "@/libs/projects/store";
@@ -39,6 +40,7 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const [listTick, setListTick] = useState(0);
   const [importNotice, setImportNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [apiSearchQuery, setApiSearchQuery] = useState("");
+  const [metadataAnalyzing, setMetadataAnalyzing] = useState(false);
   const apiTableRef = useRef<ApiEndpointsTableHandle>(null);
   const mainScrollRef = useRef<HTMLDivElement>(null);
 
@@ -127,6 +129,34 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
     }
   }, [project.id, bumpList]);
 
+  const handleReanalyzeMetadata = useCallback(async (chooseNewSources = false) => {
+    if (metadataAnalyzing) return;
+    setMetadataAnalyzing(true);
+    try {
+      const result = await reanalyzeProjectApiMetadata(project.id, { chooseNewSources });
+      if (!result.ok) {
+        if (result.error === "cancelled") return;
+        const message = result.error === "no-interface-data"
+          ? "선택한 파일에서 tranId와 desc 정보를 찾지 못했습니다."
+          : result.error === "read-failed"
+            ? "모듈 파일을 읽지 못했습니다. 파일 위치와 권한을 확인해 주세요."
+            : `API 정보를 다시 분석하지 못했습니다. (${result.error})`;
+        setImportNotice({ open: true, message });
+        return;
+      }
+      bumpList();
+      const skipped = result.skipped.length > 0 ? `\n변경하지 못한 항목 ${result.skipped.length}개` : "";
+      setImportNotice({
+        open: true,
+        message: result.updated > 0
+          ? `API 정보 ${result.updated}개를 다시 연결했습니다.${skipped}`
+          : "새로 연결할 API 정보가 없습니다. 현재 데이터가 이미 최신이거나 일치하는 tranId가 없습니다.",
+      });
+    } finally {
+      setMetadataAnalyzing(false);
+    }
+  }, [project.id, metadataAnalyzing, bumpList]);
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
       <NoticeModal isOpen={importNotice.open} onClose={() => setImportNotice({ open: false, message: "" })} message={importNotice.message} anchorMain />
@@ -172,6 +202,26 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
                 width={180}
               >
                 API 등록하기
+              </Btn>
+              <Btn
+                category="secondary"
+                variant
+                size="medium"
+                disabled={metadataAnalyzing || endpoints.length === 0}
+                onClick={() => void handleReanalyzeMetadata()}
+                width={180}
+              >
+                {metadataAnalyzing ? "분석 중" : "API 정보 다시 분석"}
+              </Btn>
+              <Btn
+                category="secondary"
+                variant
+                size="medium"
+                disabled={metadataAnalyzing || endpoints.length === 0}
+                onClick={() => void handleReanalyzeMetadata(true)}
+                width={180}
+              >
+                API 정보 파일 변경
               </Btn>
               <Btn
                 category="secondary"

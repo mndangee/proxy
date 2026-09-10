@@ -43,7 +43,7 @@ export default function Header({ className = "", variant = "sub", ...props }: He
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
                 {props.onImportProject != null && (
                   <Btn category="secondary" variant size="medium" width={MAIN_HEADER_ACTION_BTN_WIDTH} onClick={props.onImportProject}>
-                    프로젝트 가져오기
+                    더미 데이터 가져오기
                   </Btn>
                 )}
                 {props.onCreateProject != null && (

@@ -18,6 +18,7 @@ import {
   DUPLICATE_PROJECT_NAME_MESSAGE,
   analyzeSharedProjectImport,
   executeSharedProjectImport,
+  getStartupProxyRecoveryNotice,
   getProjectHref,
   getStoredProjects,
   hydrateProjects,
@@ -37,6 +38,7 @@ export default function HomePage() {
   const [importIntroOpen, setImportIntroOpen] = useState(false);
   const [proxySettingsOpen, setProxySettingsOpen] = useState(false);
   const [proxySettingsBusy, setProxySettingsBusy] = useState(false);
+  const [startupRecoveryMessage, setStartupRecoveryMessage] = useState("");
 
   const refreshProjects = useCallback(() => {
     setProjects(getStoredProjects());
@@ -56,7 +58,7 @@ export default function HomePage() {
   const closeImportModal = useCallback(() => setImportModal({ open: false, message: "" }), []);
 
   const showImportError = useCallback((error: string | undefined) => {
-    if (error === "electron-only") showImportModal("Electron 앱에서만 프로젝트를 가져올 수 있습니다.");
+    if (error === "electron-only") showImportModal("Electron 앱에서만 더미 데이터를 가져올 수 있습니다.");
     else if (error === "no-json-files") showImportModal("가져올 수 있는 JSON 응답 파일이 없습니다.");
     else if (error === "invalid-manifest") showImportModal("지원하지 않거나 읽을 수 없는 프로젝트 데이터입니다.");
     else if (error === "invalid-zip") showImportModal("ZIP을 열거나 압축을 풀 수 없습니다.");
@@ -84,8 +86,21 @@ export default function HomePage() {
 
       refreshProjects();
       const summary = imported.summary ?? analysis;
+      const typeSummary = [
+        `Default ${summary.defaultCount ?? 0}`,
+        `Test ${summary.testCount ?? 0}`,
+        `Error ${summary.errorCount ?? 0}`,
+      ].join(" · ");
+      const metadataSummary = summary.metadataMappedApiCount == null
+        ? ""
+        : ` · API 정보 연결 ${summary.metadataMappedApiCount}개 · 정보 미확인 ${summary.metadataUnmappedApiCount ?? 0}개`;
+      const unmappedTrans = summary.metadataUnmappedTrans ?? [];
+      const visibleUnmapped = unmappedTrans.slice(0, 3);
+      const unmappedSummary = visibleUnmapped.length === 0
+        ? ""
+        : ` (${visibleUnmapped.join(", ")}${unmappedTrans.length > visibleUnmapped.length ? ` 외 ${unmappedTrans.length - visibleUnmapped.length}개` : ""})`;
       setImportComplete({
-        message: `${imported.project.name}을(를) 가져왔습니다. API ${summary.apiCount}개 · 응답 ${summary.responseCount}개${summary.skippedFileCount > 0 ? ` · 제외 ${summary.skippedFileCount}개` : ""}`,
+        message: `더미 응답 ${summary.responseCount}개를 가져왔습니다. API ${summary.apiCount}개 · ${typeSummary}${metadataSummary}${unmappedSummary}${summary.skippedFileCount > 0 ? ` · 제외 ${summary.skippedFileCount}개` : ""}`,
         projectHref: getProjectHref(imported.project),
       });
     })();
@@ -98,6 +113,9 @@ export default function HomePage() {
 
   useEffect(() => {
     void hydrateProjects();
+    void getStartupProxyRecoveryNotice().then((notice) => {
+      if (notice) setStartupRecoveryMessage(notice.message);
+    });
   }, []);
 
   useEffect(() => {
@@ -109,6 +127,12 @@ export default function HomePage() {
 
   return (
     <>
+      <NoticeModal
+        isOpen={Boolean(startupRecoveryMessage)}
+        onClose={() => setStartupRecoveryMessage("")}
+        message={startupRecoveryMessage}
+        anchorMain
+      />
       {importComplete ? (
         <div
           role="status"

@@ -24,17 +24,17 @@ export default function ImportProjectIntroModal({ isOpen, onClose, onContinue }:
       <div className="flex flex-col">
         <header className="px-7 pt-7 pr-14">
           <h2 id="import-project-intro-title" className="typo-title-3 text-label-strong font-bold">
-            프로젝트 가져오기
+            더미 데이터 가져오기
           </h2>
         </header>
 
         <div className="typo-body-2-normal px-7 pt-4 pb-6 leading-relaxed">
-          <p className="text-label-normal">파일이나 폴더를 선택하면 구조를 자동으로 분석해 프로젝트와 API 응답으로 구성합니다.</p>
+          <p className="text-label-normal">파일이나 폴더를 선택하면 구조를 분석해 API별 더미 응답으로 구성합니다.</p>
 
           <div className="border-border-enabled rounded-3 mt-5 divide-y border">
             <div className="px-4 py-3">
-              <p className="text-label-normal font-semibold">프로젝트 백업</p>
-              <p className="typo-caption-1 text-label-assistant mt-1">내보낸 ZIP 또는 project.json이 포함된 폴더</p>
+              <p className="text-label-normal font-semibold">DataForge 백업</p>
+              <p className="typo-caption-1 text-label-assistant mt-1">내보낸 ZIP 또는 project.json이 포함된 데이터</p>
             </div>
             <div className="px-4 py-3">
               <p className="text-label-normal font-semibold">JSON 응답 데이터</p>
@@ -49,7 +49,7 @@ export default function ImportProjectIntroModal({ isOpen, onClose, onContinue }:
             </p>
           </div>
 
-          <p className="typo-caption-1 text-label-assistant mt-4">같은 이름의 프로젝트가 있으면 가져올 수 없습니다.</p>
+          <p className="typo-caption-1 text-label-assistant mt-4">가져온 데이터는 하나의 작업 공간으로 묶어 저장됩니다.</p>
         </div>
 
         <footer className="border-border-enabled border-t bg-gray-50 px-7 py-4">

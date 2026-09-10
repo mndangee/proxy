@@ -390,7 +390,8 @@ interface ProjectsDiskApi {
   listApis: (folderName: string) => Promise<unknown>;
   addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
   updateApi: (folderName: string, apiId: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
-  syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string) => Promise<unknown>;
+  syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string | string[]) => Promise<unknown>;
+  pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => Promise<unknown>;
   deleteApi: (folderName: string, apiId: string) => Promise<unknown>;
   getResponsesStore: (folderName: string) => Promise<unknown>;
   upsertApiResponse: (
@@ -418,6 +419,7 @@ interface ProjectsDiskApi {
   prepareProxyTakeover: (payload: { clientPort: number; upstreamPort: number; workdir: string; command: string; confirmed?: boolean }) => Promise<unknown>;
   restoreProxyTakeover: (payload: { clientPort: number; workdir: string; command: string }) => Promise<unknown>;
   restoreActiveProxyTakeover: () => Promise<unknown>;
+  getStartupRecoveryNotice: () => Promise<unknown>;
   setAppProxyConfig: (partial: {
     proxyServer?: {
       port?: number;
@@ -510,6 +512,7 @@ function getProjectsApi(): ProjectsDiskApi | null {
     updateApi: (folderName, apiId, payload) => ipc.invoke("project-fs:updateApi", folderName, apiId, payload),
     syncApisFromSfdModule: (folderName, sfdAbsolutePath) =>
       ipc.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
+    pickInterfaceDefinition: (payload) => ipc.invoke("project-fs:pickInterfaceDefinition", payload),
     deleteApi: (folderName, apiId) => ipc.invoke("project-fs:deleteApi", folderName, apiId),
     getResponsesStore: (folderName) => ipc.invoke("project-fs:getResponsesStore", folderName),
     upsertApiResponse: (folderName, apiName, payload) => ipc.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
@@ -521,6 +524,7 @@ function getProjectsApi(): ProjectsDiskApi | null {
     prepareProxyTakeover: (payload) => ipc.invoke("project-fs:prepareProxyTakeover", payload),
     restoreProxyTakeover: (payload) => ipc.invoke("project-fs:restoreProxyTakeover", payload),
     restoreActiveProxyTakeover: () => ipc.invoke("project-fs:restoreActiveProxyTakeover"),
+    getStartupRecoveryNotice: () => ipc.invoke("proxy:get-startup-recovery-notice"),
     setAppProxyConfig: (partial) => ipc.invoke("project-fs:setAppProxyConfig", partial),
     setLinkedClients: (payload) => ipc.invoke("project-fs:setLinkedClients", payload),
     getMockProxyStatus: () => ipc.invoke("mock-proxy:status"),
@@ -563,6 +567,7 @@ type ManifestLike = {
   isFavorite: boolean;
   folderName: string;
   linkedClients?: LinkedClientEntry[];
+  apiMetadataSources?: string[];
 };
 
 function manifestToProject(m: ManifestLike): Project {
@@ -575,6 +580,7 @@ function manifestToProject(m: ManifestLike): Project {
     isFavorite: m.isFavorite,
     folderName: m.folderName,
     ...(m.linkedClients?.length ? { linkedClients: m.linkedClients } : {}),
+    ...(m.apiMetadataSources?.length ? { apiMetadataSources: m.apiMetadataSources } : {}),
   };
 }
 
@@ -1397,21 +1403,21 @@ export async function updateProjectApiEndpoint(
  */
 export async function syncProjectApisFromCareSfd(
   projectId: string,
-  opts: { filePath?: string; sourceText?: string },
+  opts: { filePath?: string; filePaths?: string[]; sourceText?: string },
 ): Promise<{ ok: true; updated: number; skipped: string[] } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
   if (!p) return { ok: false, error: "not-found" };
 
-  const pathTrim = opts.filePath?.trim();
+  const pathList = [...(opts.filePaths ?? []), ...(opts.filePath ? [opts.filePath] : [])].map((path) => path.trim()).filter(Boolean);
   const disk = getProjectsApi();
 
-  if (disk && pathTrim && typeof (disk as { syncApisFromSfdModule?: unknown }).syncApisFromSfdModule === "function") {
+  if (disk && pathList.length > 0 && typeof (disk as { syncApisFromSfdModule?: unknown }).syncApisFromSfdModule === "function") {
     const folder = p.folderName?.trim();
     if (!folder) return { ok: false, error: "no-folder" };
     try {
-      const raw = await (disk as { syncApisFromSfdModule: (f: string, path: string) => Promise<unknown> }).syncApisFromSfdModule(
+      const raw = await (disk as { syncApisFromSfdModule: (f: string, path: string | string[]) => Promise<unknown> }).syncApisFromSfdModule(
         folder,
-        pathTrim,
+        pathList,
       );
       const res = raw as { ok?: boolean; updated?: number; skipped?: string[]; error?: string };
       if (!res.ok) return { ok: false, error: res.error ?? "sync-failed" };
@@ -1456,6 +1462,24 @@ export async function syncProjectApisFromCareSfd(
   }
 
   return { ok: true, updated, skipped };
+}
+
+export async function reanalyzeProjectApiMetadata(
+  projectId: string,
+  options?: { chooseNewSources?: boolean },
+): Promise<{ ok: true; updated: number; skipped: string[] } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (!disk || typeof disk.pickInterfaceDefinition !== "function") return { ok: false, error: "electron-only" };
+  const project = getStoredProjects().find((item) => item.id === projectId);
+  const folderName = project?.folderName?.trim();
+  if (!folderName) return { ok: false, error: "no-folder" };
+  try {
+    const raw = await disk.pickInterfaceDefinition({ folderName, forcePick: options?.chooseNewSources === true }) as { ok?: boolean; paths?: string[]; error?: string };
+    if (!raw.ok || !raw.paths?.length) return { ok: false, error: raw.error ?? "read-failed" };
+    return syncProjectApisFromCareSfd(projectId, { filePaths: raw.paths });
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "reanalyze-failed" };
+  }
 }
 
 export async function deleteProjectApiEndpoint(projectId: string, apiId: string): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -1728,6 +1752,20 @@ export async function restoreActiveProxyTakeover(): Promise<
   return await disk.restoreActiveProxyTakeover() as
     | { ok: true; restored: boolean }
     | { ok: false; error: string };
+}
+
+export async function getStartupProxyRecoveryNotice(): Promise<{ type: "success" | "error"; message: string } | null> {
+  const disk = getProjectsApi();
+  if (!disk || typeof disk.getStartupRecoveryNotice !== "function") return null;
+  try {
+    const raw = await disk.getStartupRecoveryNotice();
+    if (!raw || typeof raw !== "object") return null;
+    const value = raw as { type?: unknown; message?: unknown };
+    if ((value.type !== "success" && value.type !== "error") || typeof value.message !== "string" || !value.message.trim()) return null;
+    return { type: value.type, message: value.message.trim() };
+  } catch {
+    return null;
+  }
 }
 
 export async function restoreProxyTakeover(
@@ -2123,6 +2161,12 @@ export type ProjectImportSummary = {
   apiCount: number;
   responseCount: number;
   skippedFileCount: number;
+  defaultCount?: number;
+  testCount?: number;
+  errorCount?: number;
+  metadataMappedApiCount?: number;
+  metadataUnmappedApiCount?: number;
+  metadataUnmappedTrans?: string[];
 };
 
 export type ProjectImportAnalysis = {
@@ -2135,6 +2179,9 @@ export type ProjectImportAnalysis = {
   testCount: number;
   errorCount: number;
   skippedFileCount: number;
+  metadataMappedApiCount?: number;
+  metadataUnmappedApiCount?: number;
+  metadataUnmappedTrans?: string[];
 };
 
 export async function analyzeSharedProjectImport(): Promise<

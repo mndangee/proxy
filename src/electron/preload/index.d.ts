@@ -10,6 +10,7 @@ export interface ProjectManifest {
   isFavorite: boolean;
   folderName: string;
   linkedClients?: LinkedClientEntry[];
+  apiMetadataSources?: string[];
 }
 
 export interface StoredApiEntry {
@@ -32,7 +33,7 @@ export interface ProjectFsApi {
     | {
         ok: true;
         project: ProjectManifest;
-        summary?: { detectedFormat: "server-dump" | "grouped-json" | "plain-json"; apiCount: number; responseCount: number; skippedFileCount: number };
+        summary?: { detectedFormat: "server-dump" | "grouped-json" | "plain-json"; apiCount: number; responseCount: number; skippedFileCount: number; defaultCount?: number; testCount?: number; errorCount?: number; metadataMappedApiCount?: number; metadataUnmappedApiCount?: number; metadataUnmappedTrans?: string[] };
       }
     | { ok: false; error: string }
   >;
@@ -49,6 +50,9 @@ export interface ProjectFsApi {
           testCount: number;
           errorCount: number;
           skippedFileCount: number;
+          metadataMappedApiCount?: number;
+          metadataUnmappedApiCount?: number;
+          metadataUnmappedTrans?: string[];
         };
       }
     | { ok: false; error: string }
@@ -70,8 +74,9 @@ export interface ProjectFsApi {
   ) => Promise<{ ok: true; api: StoredApiEntry } | { ok: false; error: string }>;
   syncApisFromSfdModule: (
     folderName: string,
-    sfdAbsolutePath: string,
+    sfdAbsolutePath: string | string[],
   ) => Promise<{ ok: true; updated: number; skipped: string[] } | { ok: false; error: string }>;
+  pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => Promise<{ ok: true; paths: string[]; remembered: boolean } | { ok: false; error: string }>;
   deleteApi: (folderName: string, apiId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   getResponsesStore: (folderName: string) => Promise<{ version: number; byApiName: Record<string, unknown[]> }>;
   upsertApiResponse: (
@@ -92,6 +97,7 @@ export interface ProjectFsApi {
     { ok: true } | { ok: false; error: string }
   >;
   restoreActiveProxyTakeover: () => Promise<{ ok: true; restored: boolean } | { ok: false; error: string }>;
+  getStartupRecoveryNotice: () => Promise<{ type: "success" | "error"; message: string } | null>;
   setAppProxyConfig: (
     partial: {
       proxyServer?: {

@@ -1,318 +1,261 @@
-# DataForge (Proxy)
+# DataForge
 
-## 소개
-
-- **Electron + React + TypeScript** 기반 데스크톱 애플리케이션입니다.
-- **프로젝트 관리**: 홈에서 프로젝트를 생성·목록 조회합니다. **Electron**에서는 사용자 데이터 폴더에 프로젝트를 저장하고, **브라우저만 쓸 때**는 **localStorage** 폴백을 씁니다(아래 **데이터 저장 방식**).
-- **API 탐색**: 프로젝트별 API 엔드포인트 목록, 응답 시나리오(로컬/테스트/에러) 선택, JSON 더미 편집(`/api/json`) 흐름을 지원합니다.
-- **UI**: 디자인 시스템 토큰(`bg-background-*`, `text-label-*`, `typo-*` 등)과 Tailwind CSS 4.x, 공통 컴포넌트(`Btn`, `Input`, `Modal` 등)를 사용합니다.
-
-## 기술 스택
-
-- **Electron** — 데스크톱 런타임
-- **React** — 18.x
-- **TypeScript** — 5.x
-- **Vite / electron-vite** — 7.x
-- **Tailwind CSS** — 4.x (`src/styles/globals.css`의 `@theme` 중심, `tailwind.config.ts`는 플러그인 등 보조 설정)
-- **Pretendard** — 기본 폰트
+DataForge는 프로젝트 코드를 바꾸지 않고 저장된 더미 응답을 사용할 수 있게 해주는 Electron 기반 로컬 프록시 도구입니다. JSON 응답을 API별로 관리하고, 조건에 맞는 더미가 없으면 기존 프로젝트 서버로 요청을 전달합니다.
 
 ## 주요 기능
 
-| 영역                                 | 설명                                                                                                                                       |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **홈 (`/`)**                         | 저장된 프로젝트 카드 목록, 탭·히스토리 UI                                                                                                  |
-| **프로젝트 생성**                    | 헤더 **「새 프로젝트 만들기」** 또는 사이드바 **「프로젝트 생성하기」** → 전역 모달(`CreateProjectModal`). 이름·설명·즐겨찾기 입력 후 저장 |
-| **프로젝트 상세 (`/project/:slug`)** | 프로젝트 메타·API 엔드포인트 테이블(목 데이터와 연동)                                                                                      |
-| **API 상세 (`/api/:apiName`)**       | 응답 그룹 라디오, 활성 응답 표시, JSON 편집기로 이동                                                                                       |
-| **JSON 편집 (`/api/json`)**          | 쿼리(`apiName`, `type`, `responseValue` 등)로 리소스 편집,보내기·「응답으로 사용」                                                         |
-| **내비게이션 (LNB)**                 | 프로젝트 목록·API 엔드포인트·JSON 편집 응답 트리; 홈·즐겨찾기 필터·접기/펼치기 (아래 **사이드 내비게이션** 참고)                           |
-| **라이선스 (`/licenses`)**           | 오픈소스 라이선스 목록                                                                                                                     |
-| **다운로드 · 공유 (`/downloads`)**   | 릴리스·ZIP·문서·PPT 링크 모음(팀 공유용)                                                                                                   |
-| **디자인 시스템 (`/design-system`)** | 컴포넌트 샘플                                                                                                                              |
+- JSON 파일·폴더·ZIP에서 더미 데이터 가져오기
+- `tranId`를 기준으로 API 이름과 설명 자동 연결
+- Default, Test, Error 응답 관리
+- URL 쿼리 파라미터별 응답 선택
+- 응답 JSON 편집, 저장 및 즉시 적용
+- 기존 프로젝트 서버 포트 전환 및 원래 포트 복구
+- 더미가 없는 요청을 실제 프로젝트 서버로 전달
+- 연결 상태 진단과 단계별 오류 안내
+- 최근 요청의 트랜 ID, 처리 결과, 상태 코드와 응답 시간 확인
+- 정상 종료 및 비정상 종료 후 프로젝트 서버 복구
+- macOS와 Windows 실행·배포 지원
 
-### 사이드 내비게이션 (`Navigation.tsx`)
+## 사용 방법
 
-`src/components/shared/Navigation.tsx` — 왼쪽 사이드바(LNB)입니다.
+### 1. 더미 데이터 가져오기
 
-- **접기/펼치기**: `ToggleNaviIcon` 버튼으로 너비 전환(펼침 약 280px / 접힘 좁은 열).
-- **홈**: `NavigationTopHomeIcon`으로 `/` 이동.
-- **즐겨찾기만 보기** (프로젝트 목록이 나올 때만 표시): 클릭 시 **페이지 이동 없이** LNB 프로젝트 목록만 즐겨찾기 항목으로 좁힘. 꺼져 있을 때는 외곽 별 `StarIcon`, 켜져 있을 때는 채운 별 `FillStarIcon`으로 표시.
-- **상단 아이콘 크기**: 펼침·접힘 모두에서 홈과 즐겨찾기 토글 별의 **표시 크기를 동일 계열로 맞춤** (코드상 홈 `18×18`px, 별 `22×22`px 등 Tailwind 고정 크기).
-- **프로젝트 행**: 각 링크 왼쪽에 즐겨찾기 여부에 따라 `StarIcon` / `FillStarIcon`(목록 행은 `h-6 w-6`).
-- **데이터**: `getStoredProjects()`로 목록 로드, `proxy-projects-changed` 이벤트로 갱신(`PROJECTS_CHANGED_EVENT` in `src/libs/projects/store.ts`).
-- **경로별 패널**:
-  - **홈 계열** (`/` 등): 검색 입력 + 프로젝트 목록 + **프로젝트 생성하기**(전역 모달).
-  - **`/api/:apiName`**: 해당 프로젝트의 API 엔드포인트로 JSON 편집 진입 링크.
-  - **`/api/json`**: `jsonEditorApiName` prop과 쿼리에 맞춰 로컬/테스트/에러 응답 그룹 네비.
-- **props**: `activeProjectSlug`, `currentApiName`, `jsonEditorApiName`, `onNewProject`(미사용 시 생략 가능).
+홈에서 `더미 데이터 가져오기`를 누르고 JSON 파일, 폴더 또는 DataForge ZIP을 선택합니다.
 
-### 데이터 저장 방식
+서버에서 받은 다음 형식의 파일명도 인식합니다.
 
-구현 위치: **`src/libs/projects/store.ts`**, **`src/libs/datadummy/api.ts`** 등.
-
-#### 프로젝트 목록 (생성·즐겨찾기·삭제)
-
-| 환경                                                                           | 저장 위치                                                                                      | 비고                                              |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| **Electron** (preload `window.api.projects` 또는 IPC `project-fs:*` 사용 가능) | **디스크** — 주석 기준 `userData/DataForge-projects` 하위, 프로젝트별 폴더·매니페스트          | 생성/즐겨찾기/삭제/가져오기·내보내기는 IPC로 처리 |
-| **그 외** (순수 브라우저 등)                                                   | **localStorage** 키 `proxy-app-projects-v1` — 프로젝트 객체 **JSON 배열** 전체를 직렬화해 저장 | 추가·수정 시 배열을 통째로 다시 저장              |
-
-#### 저장 경로 (디스크 · Finder)
-
-Electron에서는 **`app.getPath("userData")`** 아래에 **`DataForge-projects`** 폴더를 만들고, 프로젝트마다 **`{folderName}/`** 하위 디렉터리를 둡니다(구현: `src/electron/main/project-fs.ts`의 `getProjectsRoot()`).
-
-| 플랫폼      | `userData` 예시 (앱 이름에 따라 달라질 수 있음)                                                | 프로젝트 루트                 |
-| ----------- | ---------------------------------------------------------------------------------------------- | ----------------------------- |
-| **macOS**   | `~/Library/Application Support/proxy` — `electron-builder.yml`의 **`productName: proxy`** 기준 | `…/proxy/DataForge-projects/` |
-| **Windows** | `%APPDATA%\proxy` 근처( Electron 기본 규칙)                                                    | `…\proxy\DataForge-projects\` |
-| **Linux**   | `~/.config/proxy` 근처( Electron 기본 규칙)                                                    | `…/proxy/DataForge-projects/` |
-
-- **한 프로젝트 폴더**: `{위 루트}/{folderName}/` — 내부에 **`project.json`**, **`apis/`** 등(레이아웃은 `src/libs/project-fs/layout.ts` 참고).
-- **macOS에서 Finder로 열기**: **이동 → 폴더로 이동…**(⌘⇧G)에 다음을 입력합니다.
-
-  `~/Library/Application Support/proxy/DataForge-projects`
-
-  개발/빌드 설정으로 앱 **표시 이름**이 바뀌면 `proxy` 대신 해당 이름의 `Application Support` 하위 폴더를 확인하세요. 정확한 루트는 런타임에 IPC **`project-fs:getRootPath`**(`getProjectsRootPath()` 호출)로도 확인할 수 있습니다.
-
-- **브라우저만 사용할 때** 프로젝트 목록은 **디스크 폴더가 아니라** 해당 출처(origin)의 **localStorage** `proxy-app-projects-v1`에만 있습니다(개발 서버 URL과 배포 URL이 다르면 서로 다른 저장소).
-
-**공통 동작**
-
-- 앱에서 쓰는 목록은 메모리 **`projectsCache`**에 두고, UI는 **`getStoredProjects()`**로 읽습니다. Electron 경로에서는 부팅 시 **`hydrateProjects()`**로 디스크에서 채웁니다.
-- **마이그레이션**: 디스크 API가 있고 디스크 목록이 비어 있을 때, 예전 **localStorage** `proxy-app-projects-v1`에 데이터가 있으면 **`migrateFromLegacy`**로 한 번 옮긴 뒤 해당 키를 비웁니다.
-- 저장된 뒤 **`notifyProjectsChanged()`** → 커스텀 이벤트 **`proxy-projects-changed`**(`PROJECTS_CHANGED_EVENT`)로 LNB·홈 카드 등이 갱신됩니다.
-- **`open-create-project-modal`** 이벤트: `requestOpenCreateProjectModal()` 호출 시 전역 프로젝트 생성 모달 오픈.
-
-**프로젝트 레코드 필드** (타입 `Project`)
-
-- `id`, `name`, `description`, `createdAt`, `updatedAt`(ISO 8601), `isFavorite`
-- Electron·디스크 사용 시 **`folderName`**(슬러그형 폴더명 등)이 함께 옵니다.
-
-#### API별 “현재 선택된 응답” (탐색 UI 상태)
-
-- **`src/libs/datadummy/api.ts`**: 응답 시나리오 **목록(로컬/테스트/에러)** 자체는 **코드에 정의된 목 데이터**입니다.
-- 사용자가 API 화면에서 고른 **활성 응답**은 **localStorage** 키 **`active-api-response:${apiName}`** 에 JSON으로 저장됩니다(`getStoredActiveApiResponse` / `setStoredActiveApiResponse`). JSON 편집기 진입 URL(`getJsonEditorEntryHref`)도 이 값을 참고합니다.
-
-#### 그 외 목 데이터
-
-- `src/libs/datadummy/project.ts` — 프로젝트 **ID**별 API 엔드포인트 목록(저장소에 있는 프로젝트 `id`와 맞출 때 사용)
-- `src/libs/datadummy/home.ts` — 홈 활동 목(`mockActivities`) 등
-- `slugify`: `@/libs/slugify`
-
-## 폴더 구조
-
-```
-├── scripts
-│   └── generate-licenses.js    # 오픈소스 라이선스 JSON 생성
-├── src
-│   ├── main                    # Electron 메인 프로세스
-│   ├── preload
-│   ├── renderer                # index.html, main.tsx, App.tsx (라우팅·History/해시 폴백)
-│   ├── app                     # 페이지 (App Router 스타일)
-│   │   ├── layout.tsx          # 루트 레이아웃, #modal, GlobalCreateProjectModal
-│   │   ├── page.tsx            # 홈
-│   │   ├── project/page.tsx    # 프로젝트 상세
-│   │   ├── api/page.tsx        # API 탐색
-│   │   ├── api/json/page.tsx   # JSON 리소스 편집
-│   │   ├── design-system/page.tsx
-│   │   └── licenses/page.tsx
-│   ├── components
-│   │   ├── common/             # Btn, Input, TextArea, Modal, ModalPortal, Radio, DropDown, Loader …
-│   │   ├── shared/           # Header, Navigation, Table
-│   │   ├── main/             # ProjectList, ProjectCard, CreateProjectModal, ProjectTab, HistoryList
-│   │   ├── api/              # ApiExplorerHeader, ApiResponseSection, ApiResponseStatus
-│   │   ├── project/          # ApiEndpointsTable, NoApiEndpoints
-│   │   └── providers/        # GlobalCreateProjectModal
-│   ├── libs
-│   │   ├── projects/store.ts # 프로젝트 디스크(Electron)·localStorage 폴백·이벤트
-│   │   ├── datadummy/        # API·엔드포인트·활동 목 데이터
-│   │   └── slugify.ts
-│   ├── types/index.ts        # Project, ApiEndpoint, Activity 등
-│   └── styles/               # globals.css(@theme), main.css 등
-├── electron.vite.config.ts
-├── tailwind.config.ts
-├── package.json
-└── tsconfig*.json
+```text
+VD_CMDJ0089_1080_Test.json
 ```
 
-## 라우팅
+- `VD_CMDJ0089` → 트랜 ID `VD.CMDJ0089`
+- `1080` → 동일 트랜 내 응답을 구분하는 sourceId
+- `Test` → 응답 라벨 및 Test 분류
 
-- 개발 시 **path** 기준: `/`, `/project/e-commerce-mock`, `/api/VD.MOVS0001`, `/api/json?...`, `/licenses`, `/design-system` 등.
-- Electron에서 `file://` 로 열릴 때는 **해시** 라우팅으로 폴백할 수 있습니다 (`src/electron/renderer/App.tsx`).
-- 같은 경로에서 **쿼리만 바뀌는** 이동(예: `/api/json?...`)은 내부적으로 `locationKey`로 페이지를 구분해 폼·LNB가 갱신되도록 되어 있습니다.
+라벨에 Default, Test, Error 의미가 있으면 해당 분류를 우선합니다. 명시적인 Default가 없으면 sourceId가 가장 빠른 응답을 Default로 사용하고 나머지는 Test로 분류합니다.
 
-## 모달
+### 2. API 이름과 설명 자동 연결
 
-- `Modal` + `ModalPortal`은 `#modal` 노드(`layout.tsx`)에 포털로 렌더됩니다.
-- 프로젝트 생성 모달은 레이아웃의 `GlobalCreateProjectModal`에서 한 번만 마운트되며, 헤더·내비에서 동일하게 열립니다.
+가져오기 과정에서 모듈 파일의 다음 형식을 찾아 트랜 정보와 연결합니다.
 
-### 프록시 설정 모달
+```js
+getRsrvList: {
+  tranId: "VD.MOVS0018",
+  desc: "예약목록 조회",
+}
+```
 
-구현 위치:
+연결 결과:
 
-- `src/app/page.tsx`: **프록시 설정** 버튼 → 모달 오픈
-- `src/components/main/ProxyServerSettingsCard.tsx`: 모달 콘텐츠(설정 UI)
+```text
+API 이름: getRsrvList
+트랜 ID: VD.MOVS0018
+설명: 예약목록 조회
+```
 
-변경 사항(2026-05):
+탐색 순서:
 
-- **모달 너비 고정**: `Modal`에 `panelClassName` prop을 추가했고, 프록시 설정 모달은 `max-w-[600px]`로 표시합니다.
-- **닫기(X) 동작**: 모달의 기본 `showCloseBtn` 대신, 카드 헤더 내부에 닫기 버튼을 배치해 **스크롤 시 함께 이동**하도록 했습니다.
-- **모달 전용 컴포넌트로 정리**: `ProxyServerSettingsCard`의 비모달(카드) 렌더링 분기를 제거하고 **모달에서만** 사용하도록 단순화했습니다.
-- **버튼 배치**: 하단 액션 영역에 **게이트웨이 시작** 옆에 **게이트웨이 끄기**(게이트웨이 활성화 시) 버튼이 함께 보이도록 배치했습니다.
-- **체크박스 통일**: `input[type="checkbox"]`를 공통 `CheckBox` 컴포넌트로 교체했습니다.
-- **빠른 설정 안내 통합**: 기존 디자인을 유지하면서 상단에 “빠른 설정” 가이드를 간단한 안내 박스로 포함했습니다.
-- **가이드 문구 정리**: `nvm use` / `.nvmrc` 관련 안내 문구를 제거하고, 상태는 `STATUS` pill의 점(준비/실행/에러)으로 시각화하도록 정리했습니다.
+1. 가져온 데이터 폴더와 상위 경로
+2. 해당 작업 공간에 연결된 API 정보 파일
+3. 프록시에 설정된 서버 코드 폴더(보조 경로)
 
-## 설정
+데이터와 API 정보가 서로 관련 없는 위치에 있으면 파일 선택창이 표시됩니다. 파일명과 위치는 제한하지 않으며 `tranId` 구조가 있는 JS·TS·JSON 파일을 여러 개 선택할 수 있습니다. 선택한 경로는 해당 작업 공간의 `project.json`에만 저장되므로 다른 프로젝트와 섞이지 않습니다. 선택을 취소해도 트랜 ID를 API 이름으로 사용해 가져오기는 계속됩니다.
 
-### Tailwind CSS
+프로젝트 상세의 `API 정보 다시 분석`은 저장된 파일들을 다시 읽고, `API 정보 파일 변경`은 다른 파일을 선택해 해당 프로젝트의 연결 정보만 교체합니다.
 
-| 항목     | 설명                                                                         |
-| -------- | ---------------------------------------------------------------------------- |
-| **테마** | `src/styles/globals.css`의 `@theme { }` 로 컬러·타이포·간격 등               |
-| **로딩** | `src/renderer/main.tsx`에서 `globals.css`, `main.css` import                 |
-| **유틸** | `bg-background-primary`, `text-label-normal`, `rounded-3`, `typo-title-3` 등 |
+Default 응답이 하나뿐이고 모듈 설명을 찾았다면 해당 `desc`를 응답 제목으로 사용합니다.
 
-### 디자인 시스템
+### 3. 응답 편집 및 사용
 
-- 공통 컴포넌트: `src/components/common` (`Btn`, `Input`, `Modal` …)
-- 컬러·타이포는 `globals.css`의 `@theme` 및 컴포넌트에 정의된 `typo-*`, `text-label-*` 클래스를 따릅니다.
+API 상세에서 응답을 선택하고 JSON 편집 화면으로 이동합니다.
 
-### 환경 변수
+- 제목, 설명, 타입과 JSON 본문을 편집할 수 있습니다.
+- `key=value&key2=value2` 형식으로 URL 쿼리 조건을 지정할 수 있습니다.
+- 쿼리 조건이 모두 일치하는 응답 중 조건이 많은 응답을 우선합니다.
+- 일치하는 조건 응답이 없으면 조건 없는 Default 응답을 사용합니다.
+- `응답으로 사용`을 누르면 현재 편집 내용을 먼저 저장한 뒤 활성화합니다.
+- 처리 중에는 버튼이 잠기며 `저장 중`, `적용 중` 상태가 표시됩니다.
 
-- 기본적으로 `.env` 없이 동작합니다. 필요 시 Vite 규칙에 맞게 `VITE_*` 변수를 두면 됩니다.
+### 4. 더미 응답 연결
 
-## 프로젝트 실행
+기본 포트 구성:
 
-Node.js 24를 사용합니다. 운영체제와 관계없이 저장소에서 다음 명령으로 실행할 수 있습니다.
+| 역할 | 포트 | 설명 |
+| --- | ---: | --- |
+| 프로젝트 요청 | `7777` | 기존 클라이언트가 호출하는 주소 |
+| 프로젝트 서버 | `7778` | 더미가 없을 때 전달할 실제 서버 |
+| DataForge 내부 서버 | `4780` | 저장된 더미 응답 조회 전용 |
+
+프로젝트 서버가 없다면 서버 코드 설정 없이 더미 전용으로 연결할 수 있습니다. 이 경우 저장되지 않은 요청은 실제 서버로 전달할 수 없습니다.
+
+실행 중인 프로젝트 서버와 실제 응답을 함께 사용하려면:
+
+1. 프록시 설정에서 프로젝트 서버 폴더를 선택합니다.
+2. DataForge가 실행 명령을 자동 감지합니다.
+3. `연결 시작`을 누릅니다.
+4. 기존 서버 종료를 확인하면 프로젝트 서버를 `7778`에서 다시 실행합니다.
+5. DataForge 프록시가 기존 요청 주소인 `7777`을 사용합니다.
+
+```text
+클라이언트 :7777
+  → 저장된 응답이 있으면 DataForge 더미 사용
+  → 저장된 응답이 없으면 실제 서버 :7778로 전달
+```
+
+`연결 끊기`는 모든 서버를 종료하는 기능이 아닙니다. DataForge 프록시를 종료하고 프로젝트 서버를 원래 `7777` 포트로 복구합니다.
+
+### 5. 최근 요청
+
+화면 하단의 원형 버튼에서 다음 내용을 확인할 수 있습니다.
+
+- HTTP 메서드와 요청 경로
+- 트랜 ID
+- 더미 응답 또는 실제 서버 처리 여부
+- 사용된 응답 라벨
+- 상태 코드와 응답 시간
+
+저장된 더미 요청을 누르면 API 상세로 이동합니다. 최근 요청은 최대 100개, 7일 동안 보관되며 앱을 다시 실행해도 유지됩니다. 패널을 확인하면 새 요청이 들어오기 전까지 읽지 않은 배지가 사라집니다.
+
+## 서버 전환과 복구
+
+프로젝트 서버를 전환하면 `active-proxy-takeover.json`에 원래 포트, 이동 포트, 서버 폴더와 실행 명령을 기록합니다.
+
+- 연결 해제 또는 정상 종료 시 프로젝트 서버를 원래 포트로 복구합니다.
+- 강제 종료 후 다음 실행에서도 남은 기록과 포트를 확인해 복구합니다.
+- 다른 프로그램이 원래 포트를 사용 중이면 강제로 종료하지 않습니다.
+- 복구 결과는 DataForge 공통 알림으로 한 번만 표시합니다.
+
+## 데이터 저장 위치
+
+Electron의 `app.getPath("userData")` 아래에 저장합니다.
+
+| 데이터 | 위치 |
+| --- | --- |
+| 프로젝트와 API 응답 | `DataForge-projects/` |
+| 프록시 설정과 활성 응답 | `proxy-app-config.json` |
+| 최근 요청 | `recent-proxy-requests.json` |
+| 서버 전환 기록 | `active-proxy-takeover.json` |
+| 프로젝트별 API 정보 파일 경로 | 각 프로젝트의 `project.json` 내 `apiMetadataSources` |
+| 가져오기 호환용 최근 모듈 경로 | `import-interface-source.json` |
+
+플랫폼별 기본 위치:
+
+| 플랫폼 | 예시 |
+| --- | --- |
+| macOS | `~/Library/Application Support/proxy/` |
+| Windows | `%APPDATA%\proxy\` |
+| Linux | `~/.config/proxy/` |
+
+새 컴퓨터에는 포트 기본값만 제공되며 프로젝트 경로, 실행 명령과 더미 데이터는 비어 있습니다. 같은 컴퓨터에서 앱만 다시 설치하면 기존 userData가 유지될 수 있습니다.
+
+순수 브라우저 환경에서는 일부 데이터가 localStorage에 저장되지만, 파일 가져오기와 프록시 제어는 Electron 앱에서만 사용할 수 있습니다.
+
+## 개발 환경 실행
+
+요구 사항:
+
+- Node.js 24.x
+- npm 9 이상
 
 ```bash
-npm install
-npm run dev
-```
-
-- Windows에서는 PowerShell 또는 명령 프롬프트에서 같은 명령을 사용합니다. Bash나 NVM은 필수가 아닙니다.
-- macOS에서 NVM을 사용한다면 최초 실행 전에 `nvm use`로 `.nvmrc`의 Node 버전을 선택할 수 있습니다.
-
-### 사전 요구 사항
-
-- **Node.js** 24.x (`package.json`과 `.nvmrc` 기준)
-- **npm** 9.x 이상
-
-### Node를 찾지 못할 때
-
-```sh
-./dev
-# 또는
-bash scripts/dev.sh
-```
-
-### 초기 세팅
-
-```sh
-git clone [저장소 URL]
+git clone https://github.com/mndangee/proxy.git
 cd proxy
 npm install
-npm run licenses   # 선택: 라이선스 페이지용 JSON 생성
+npm run dev
 ```
 
-### 개발
+Windows에서는 PowerShell 또는 명령 프롬프트에서 같은 명령을 사용합니다. macOS에서는 다음 명령도 사용할 수 있습니다.
 
-```sh
-npm run dev
-# macOS — Apple 개발자 등록·릴리스 DMG 없이 실행
+```bash
 ./run-mac
 # 또는
 npm run run:mac
 ```
 
-- Electron 창이 열리며 Vite 개발 서버와 연동됩니다.
-- 브라우저에서 Vite만 띄운 경우(예: `http://localhost:5173`)에도 동일한 페이지 구조로 동작할 수 있습니다(엔트리 설정에 따름).
+## 검사와 빌드
 
-### macOS에서 서명 없이 실행 (다운로드 없이)
-
-릴리스 **DMG를 받지 않고**, **Apple Developer Program 등록 없이** 저장소에서 바로 쓸 수 있습니다.
-
-| 방법 | 명령 | 설명 |
-| ---- | ---- | ---- |
-| **권장** | `./run-mac` 또는 `npm run run:mac` | 소스에서 개발 모드 실행. 서명·패키징 불필요 |
-| 로컬 `.app` | `./run-mac --app` 또는 `npm run run:mac:app` | 개발자 계정 없이 빌드 후 로컬 임시 서명(ad-hoc)과 Gatekeeper 격리 속성 정리를 거쳐 실행 |
-
-```sh
-git clone https://github.com/mndangee/proxy.git
-cd proxy
-npm install
-./run-mac
+```bash
+npm run typecheck
+npm run lint
+npm run build
 ```
 
-패키징된 앱만 필요할 때(여전히 서명·공증 없음):
-
-```sh
-npm run build:mac:unsigned
-npm run run:mac:app
+```bash
+npm run build:win          # Windows x64
+npm run build:win:arm64    # Windows ARM64
+npm run build:mac          # macOS ARM64
+npm run build:linux
 ```
 
-다른 Mac 사용자에게 사내·테스트용 ZIP으로 전달할 때:
+## 서명하지 않은 macOS 앱 배포
 
-```sh
-npm run bundle:mac:unsigned:arm64 # Apple Silicon(M1 이상)
+Apple 개발자 인증서 없이 사내·테스트용 앱을 만들 수 있습니다.
+
+```bash
+npm run bundle:mac:unsigned:arm64 # Apple Silicon
 npm run bundle:mac:unsigned:x64   # Intel Mac
 ```
 
-생성된 `dist/proxy-mac-unsigned-{아키텍처}.zip`에는 `proxy.app`, `open.mac.command`, `README-MAC.txt`가 포함됩니다. 사용자는 압축을 푼 뒤 `open.mac.command`를 더블클릭합니다.
+생성된 `dist/proxy-mac-unsigned-{아키텍처}.zip`에는 다음 파일이 포함됩니다.
 
-> `--app` 방식은 직접 빌드한 앱에만 로컬 임시 서명과 `xattr -cr`을 적용합니다. 출처를 모르는 앱의 보안 검사를 해제하는 용도가 아닙니다. 팀 배포용은 `build:mac:release`(Apple 인증서 서명·공증)를 사용하세요.
-
-### 빌드
-
-```sh
-npm run build
-npm run build:mac | build:win | build:linux
+```text
+proxy.app
+open.mac.command
+README-MAC.txt
 ```
 
-- `npm run build:win`: 일반적인 Intel/AMD Windows용 x64 설치 파일
-- `npm run build:win:arm64`: Windows ARM 기기용 설치 파일
+사용자는 ZIP 압축을 푼 뒤 `open.mac.command`를 더블클릭합니다. 외부 배포에는 Apple 인증서 서명과 공증을 권장합니다.
 
-### 기타 스크립트
+## 프로젝트 구조
 
-```sh
-npm run typecheck
-npm run lint
-npm run format
+```text
+src/
+├── app/                  # 화면과 라우트
+├── assets/svg/           # 공통 SVG 아이콘
+├── components/           # API, 모달, 홈, 프로젝트와 공통 UI
+├── electron/
+│   ├── main/             # 저장소, 프록시, 서버 전환과 복구
+│   └── preload/          # 렌더러 IPC 브리지
+├── libs/                 # 메타데이터 분석, 응답과 프로젝트 저장
+├── styles/               # 디자인 토큰과 전역 스타일
+└── types/                # 공통 타입
+```
+
+## 테스트 문서
+
+- [프록시 최종 테스트 시나리오](docs/proxy-end-to-end-test-scenarios.md)
+- [수동 테스트 시나리오](docs/manual-test-scenarios.md)
+- [프로젝트 전체 동작 가이드](docs/project-full-flow-usage.md)
+- [데이터 라이프사이클 가이드](docs/data-lifecycle-guide.md)
+
+포트 상태 확인:
+
+```bash
+lsof -nP -iTCP:7777 -iTCP:7778 -iTCP:4780
+```
+
+## 다운로드와 공유
+
+- [최신 릴리스](https://github.com/mndangee/proxy/releases/latest)
+- [모든 릴리스](https://github.com/mndangee/proxy/releases)
+- [master 브랜치 ZIP](https://github.com/mndangee/proxy/archive/refs/heads/master.zip)
+- 앱 내부 `/downloads` 페이지
+
+## 기술 스택
+
+- Electron
+- React 18
+- TypeScript 5
+- Vite / electron-vite 7
+- Tailwind CSS 4
+- Pretendard
+
+## 라이선스
+
+의존성 변경 후 다음 명령으로 목록을 다시 생성합니다.
+
+```bash
 npm run licenses
-npm run docs:data-guide-pdf   # docs/data-lifecycle-guide.md → PDF (Chromium 기반, 최초 1회 다운로드)
 ```
 
-## 다운로드 · 공유
-
-GitHub 저장소: [https://github.com/mndangee/proxy](https://github.com/mndangee/proxy)
-
-아래 링크를 그대로 팀에 공유하면 됩니다. **앱을 실행한 경우** 화면 하단 푸터의 **「다운로드 · 공유」** 또는 경로 **`/downloads`**에서 동일한 안내 페이지를 열 수 있습니다.
-
-| 항목                                                   | 링크                                                                                                                                                                        |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 최신 릴리스 (배포용 DMG·Windows 설치 파일을 올릴 위치) | [GitHub Releases — Latest](https://github.com/mndangee/proxy/releases/latest)                                                                                               |
-| 모든 릴리스                                            | [Releases 목록](https://github.com/mndangee/proxy/releases)                                                                                                                 |
-| 소스 코드 ZIP (`feature/proxy` 브랜치 기준)            | [ZIP 다운로드](https://github.com/mndangee/proxy/archive/refs/heads/feature/proxy.zip)                                                                                      |
-| 프로젝트 전체 동작 가이드 (브라우저에서 읽기)          | [docs/project-full-flow-usage.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/project-full-flow-usage.md)                                                     |
-| 데이터 라이프사이클 가이드                             | [docs/data-lifecycle-guide.md](https://github.com/mndangee/proxy/blob/feature/proxy/docs/data-lifecycle-guide.md)                                                           |
-| 개요·사용법 PPT (GitHub에서 Raw 저장)                  | [DataForge-프로젝트-개요-및-사용법.pptx](https://github.com/mndangee/proxy/blob/feature/proxy/docs/DataForge-프로젝트-개요-및-사용법.pptx) — 파일 화면에서 **⋯ → Download** |
-
-기본 브랜치를 `main`으로 옮긴 뒤에는 위 URL의 `feature/proxy`를 `main`으로 바꾸고, 코드의 `src/libs/site-links.ts` 안 **`SITE_GITHUB_DEFAULT_BRANCH`** 값도 같이 수정하세요.
-
-## 문서
-
-- **`docs/data-lifecycle-guide.md`** — 프로젝트 데이터 **생성·저장·삭제** 흐름을 코드 파일/함수 단위로 정리한 가이드. PDF로 보려면 위 `docs:data-guide-pdf` 또는 문서 맨 아래 **「PDF로 보기」** 절 참고.
-- **`docs/project-full-flow-usage.md`** — 프록시 + 업스트림을 함께 쓰는 **프로젝트 전체 동작 기준** 실사용 가이드(포트 구성, 게이트웨이 사용 조건, Windows/Node 주의점 포함).
-- **`docs/DataForge-프로젝트-개요-및-사용법.pptx`** — 개요·사용법 정리용 PowerPoint(저장소에서 그대로 내려받거나 Finder에서 `docs` 폴더로 이동). 내용 갱신: `npm run docs:project-overview-ppt`
-
-## 라이선스 페이지
-
-- `npm run licenses` → `src/json/licenses.json` 생성
-- 앱 하단 푸터 **Open Source Licenses** 또는 `/licenses`
-
-## 주의 사항
-
-1. **Node 버전**: 네이티브 바인딩 오류 시 Node 버전 확인 후 `node_modules` 재설치를 시도하세요.
-2. **프로젝트 데이터**: 브라우저만 사용할 때는 **localStorage** `proxy-app-projects-v1`을 지우면 목록이 사라집니다. **Electron**에서는 사용자 데이터 폴더의 프로젝트 디렉터리를 지워야 합니다. 백업·동기화는 앱에 내장되어 있지 않으면 별도 처리가 필요합니다.
-3. **라이선스 목록**: 의존성 변경 후 `npm run licenses`를 다시 실행하세요.
+앱 하단 `Open Source Licenses` 또는 `/licenses`에서 확인할 수 있습니다.

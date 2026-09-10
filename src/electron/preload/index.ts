@@ -20,8 +20,9 @@ const projects = {
   addApi: (folderName: string, payload: { method: string; tran: string; description: string; name: string }) => ipcRenderer.invoke("project-fs:addApi", folderName, payload),
   updateApi: (folderName: string, apiId: string, payload: { method: string; tran: string; description: string; name: string }) =>
     ipcRenderer.invoke("project-fs:updateApi", folderName, apiId, payload),
-  syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string) =>
+  syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string | string[]) =>
     ipcRenderer.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
+  pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => ipcRenderer.invoke("project-fs:pickInterfaceDefinition", payload),
   deleteApi: (folderName: string, apiId: string) => ipcRenderer.invoke("project-fs:deleteApi", folderName, apiId),
   getResponsesStore: (folderName: string) => ipcRenderer.invoke("project-fs:getResponsesStore", folderName),
   upsertApiResponse: (folderName: string, apiName: string, payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string> }) =>
@@ -33,6 +34,7 @@ const projects = {
   prepareProxyTakeover: (payload: { clientPort: number; upstreamPort: number; workdir: string; command: string; confirmed?: boolean }) => ipcRenderer.invoke("project-fs:prepareProxyTakeover", payload),
   restoreProxyTakeover: (payload: { clientPort: number; workdir: string; command: string }) => ipcRenderer.invoke("project-fs:restoreProxyTakeover", payload),
   restoreActiveProxyTakeover: () => ipcRenderer.invoke("project-fs:restoreActiveProxyTakeover"),
+  getStartupRecoveryNotice: () => ipcRenderer.invoke("proxy:get-startup-recovery-notice"),
   setAppProxyConfig: (partial: {
     proxyServer?: {
       port?: number;
