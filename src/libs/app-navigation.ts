@@ -42,6 +42,8 @@ export function getAppPathname(): string {
 export function navigateApp(path: string): void {
   if (typeof window === "undefined") return;
   const normalized = path.startsWith("/") ? path : `/${path}`;
+  const beforeNavigate = new CustomEvent("dataforge-before-navigate", { cancelable: true, detail: { path: normalized } });
+  if (!window.dispatchEvent(beforeNavigate)) return;
   if (usesHashRouting()) {
     try {
       const baseHref = window.location.href.replace(/#.*$/, "");

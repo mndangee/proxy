@@ -392,6 +392,7 @@ interface ProjectsDiskApi {
   updateApi: (folderName: string, apiId: string, payload: { method: string; tran: string; description: string; name: string }) => Promise<unknown>;
   syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string | string[]) => Promise<unknown>;
   pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => Promise<unknown>;
+  clearApiMetadataSources: (folderName: string) => Promise<unknown>;
   deleteApi: (folderName: string, apiId: string) => Promise<unknown>;
   getResponsesStore: (folderName: string) => Promise<unknown>;
   upsertApiResponse: (
@@ -404,14 +405,16 @@ interface ProjectsDiskApi {
       editorType: string;
       configuration: string;
       queryParams?: Record<string, string>;
+      expectedUpdatedAt?: string;
     },
   ) => Promise<unknown>;
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<unknown>;
   importApisJsonPick: (
     folderName: string,
+    options?: { sessionId?: string; conflictPolicy?: "overwrite" | "add" | "skip" },
   ) => Promise<
-    | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
-    | { ok: false; error: string; errors?: string[] }
+    | { ok: true; imported: number; updated: number; skipped: number; touchedApiNames: string[]; errors: string[]; fileResults: ProjectImportFileResult[] }
+    | { ok: false; error: string; errors?: string[]; sessionId?: string; conflictFiles?: string[] }
   >;
   getAppProxyConfig: () => Promise<unknown>;
   pickServerDirectory: () => Promise<unknown>;
@@ -448,6 +451,8 @@ interface ProjectsDiskApi {
     mockApiLatencyMs?: Record<string, number> | null;
     mockActiveApiResponses?: Record<string, MockActiveApiResponseRef> | null;
   }) => Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }>;
+  resetProxySettings: () => Promise<unknown>;
+  resetAllUserData: () => Promise<unknown>;
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<unknown>;
   getMockProxyStatus: () => Promise<unknown>;
   getProxyDiagnostics: () => Promise<unknown>;
@@ -476,12 +481,15 @@ function isFullProjectsDiskApi(x: unknown): x is ProjectsDiskApi {
     typeof p.updateApi === "function" &&
     typeof p.deleteApi === "function" &&
     typeof p.syncApisFromSfdModule === "function" &&
+    typeof p.clearApiMetadataSources === "function" &&
     typeof p.getResponsesStore === "function" &&
     typeof p.upsertApiResponse === "function" &&
     typeof p.deleteApiResponse === "function" &&
     typeof p.importApisJsonPick === "function" &&
     typeof p.getAppProxyConfig === "function" &&
     typeof p.setAppProxyConfig === "function" &&
+    typeof p.resetProxySettings === "function" &&
+    typeof p.resetAllUserData === "function" &&
     typeof p.setLinkedClients === "function"
   );
 }
@@ -513,11 +521,12 @@ function getProjectsApi(): ProjectsDiskApi | null {
     syncApisFromSfdModule: (folderName, sfdAbsolutePath) =>
       ipc.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
     pickInterfaceDefinition: (payload) => ipc.invoke("project-fs:pickInterfaceDefinition", payload),
+    clearApiMetadataSources: (folderName) => ipc.invoke("project-fs:clearApiMetadataSources", folderName),
     deleteApi: (folderName, apiId) => ipc.invoke("project-fs:deleteApi", folderName, apiId),
     getResponsesStore: (folderName) => ipc.invoke("project-fs:getResponsesStore", folderName),
     upsertApiResponse: (folderName, apiName, payload) => ipc.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
     deleteApiResponse: (folderName, apiName, responseValue) => ipc.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
-    importApisJsonPick: (folderName) => ipc.invoke("project-fs:importApisJsonPick", folderName),
+    importApisJsonPick: (folderName, options) => ipc.invoke("project-fs:importApisJsonPick", folderName, options),
     getAppProxyConfig: () => ipc.invoke("project-fs:getAppProxyConfig"),
     pickServerDirectory: () => ipc.invoke("project-fs:pickServerDirectory"),
     detectServerCommand: (workdir) => ipc.invoke("project-fs:detectServerCommand", workdir),
@@ -526,6 +535,8 @@ function getProjectsApi(): ProjectsDiskApi | null {
     restoreActiveProxyTakeover: () => ipc.invoke("project-fs:restoreActiveProxyTakeover"),
     getStartupRecoveryNotice: () => ipc.invoke("proxy:get-startup-recovery-notice"),
     setAppProxyConfig: (partial) => ipc.invoke("project-fs:setAppProxyConfig", partial),
+    resetProxySettings: () => ipc.invoke("project-fs:resetProxySettings"),
+    resetAllUserData: () => ipc.invoke("project-fs:resetAllUserData"),
     setLinkedClients: (payload) => ipc.invoke("project-fs:setLinkedClients", payload),
     getMockProxyStatus: () => ipc.invoke("mock-proxy:status"),
     getProxyDiagnostics: () => ipc.invoke("mock-proxy:diagnostics"),
@@ -819,6 +830,11 @@ function coerceResponseQueryParams(raw: unknown): Record<string, string> {
   return out;
 }
 
+function responseQueryParamsSignature(params: Record<string, string> | undefined): string | null {
+  const entries = Object.entries(params ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return entries.length ? JSON.stringify(entries) : null;
+}
+
 function coerceSavedResponseRow(o: unknown): SavedApiResponseRow | null {
   if (!o || typeof o !== "object") return null;
   const r = o as Record<string, unknown>;
@@ -998,6 +1014,10 @@ export async function refreshSavedResponsesFromDisk(projectId: string): Promise<
 }
 
 export function formatSaveApiResponseUserError(code: string): string {
+  if (code.startsWith("duplicate-query-condition:")) {
+    const responseLabel = code.slice("duplicate-query-condition:".length).trim() || "이름 없는 응답";
+    return `「${responseLabel}」 응답이 같은 쿼리 조건을 사용하고 있습니다. 기존 응답의 조건을 수정하거나 다른 조건을 입력해 주세요.`;
+  }
   const ko: Record<string, string> = {
     "not-found": "프로젝트를 찾을 수 없습니다.",
     "no-folder": "프로젝트 폴더 정보가 없어 저장할 수 없습니다.",
@@ -1008,6 +1028,8 @@ export function formatSaveApiResponseUserError(code: string): string {
     "empty-value": "삭제할 응답이 지정되지 않았습니다.",
     "response-not-found": "삭제할 응답을 찾을 수 없습니다.",
     "delete-failed": "응답을 삭제하지 못했습니다.",
+    "duplicate-query-condition": "같은 쿼리 조건을 사용하는 응답이 이미 있습니다. 기존 응답의 조건을 수정하거나 다른 조건을 입력해 주세요.",
+    "response-conflict": "다른 화면에서 이 응답이 먼저 변경되었습니다. API 상세에서 응답을 다시 연 뒤 수정해 주세요.",
   };
   return ko[code] ?? `요청을 처리할 수 없습니다. (${code})`;
 }
@@ -1022,6 +1044,7 @@ export async function upsertSavedApiResponse(
     editorType: SavedApiResponseEditorType;
     configuration: string;
     queryParams?: Record<string, string>;
+    expectedUpdatedAt?: string;
   },
 ): Promise<{ ok: true; value: string } | { ok: false; error: string }> {
   const p = getStoredProjects().find((x) => x.id === projectId);
@@ -1038,6 +1061,18 @@ export async function upsertSavedApiResponse(
     const proj = { ...(all[projectId] ?? {}) };
     const list = [...(proj[apiKey] ?? [])];
     const existing = input.value?.trim() || null;
+    if (existing && input.expectedUpdatedAt) {
+      const current = list.find((row) => row.value === existing);
+      if (!current || current.updatedAt !== input.expectedUpdatedAt) return { ok: false, error: "response-conflict" };
+    }
+    const queryParams = coerceResponseQueryParams(input.queryParams);
+    const querySignature = responseQueryParamsSignature(queryParams);
+    const duplicateQueryRow = querySignature
+      ? list.find((row) => row.value !== existing && responseQueryParamsSignature(row.queryParams) === querySignature)
+      : undefined;
+    if (duplicateQueryRow) {
+      return { ok: false, error: `duplicate-query-condition:${duplicateQueryRow.label || "이름 없는 응답"}` };
+    }
     let outValue: string;
 
     if (existing) {
@@ -1049,7 +1084,7 @@ export async function upsertSavedApiResponse(
           description: input.description.trim(),
           editorType: input.editorType,
           configuration: input.configuration,
-          queryParams: input.queryParams,
+          queryParams,
           updatedAt: now,
         };
         outValue = list[idx].value;
@@ -1062,7 +1097,7 @@ export async function upsertSavedApiResponse(
           description: input.description.trim(),
           editorType: input.editorType,
           configuration: input.configuration,
-          queryParams: input.queryParams,
+          queryParams,
           createdAt: now,
           updatedAt: now,
         });
@@ -1076,7 +1111,7 @@ export async function upsertSavedApiResponse(
         description: input.description.trim(),
         editorType: input.editorType,
         configuration: input.configuration,
-        queryParams: input.queryParams,
+        queryParams,
         createdAt: now,
         updatedAt: now,
       });
@@ -1101,6 +1136,7 @@ export async function upsertSavedApiResponse(
       editorType: input.editorType,
       configuration: input.configuration,
       queryParams: input.queryParams,
+      expectedUpdatedAt: input.expectedUpdatedAt,
     });
     const res = raw as { ok?: boolean; value?: string; error?: string };
     if (!res.ok) {
@@ -1257,6 +1293,9 @@ export function formatAddApiUserError(code: string): string {
     "no-valid-json": "추가할 수 있는 JSON이 없습니다. 파일명(확장자 제외)이 API 이름이 됩니다.",
     cancelled: "취소되었습니다.",
     "import-failed": "JSON 가져오기에 실패했습니다.",
+    "import-write-failed": "가져온 데이터를 저장하지 못했습니다. 기존 프로젝트 데이터는 변경 전 상태로 복구했습니다.",
+    "import-session-expired": "가져오기 확인 시간이 만료되었습니다. 파일을 다시 선택해 주세요.",
+    "import-in-progress": "이 프로젝트에서 이미 API를 가져오고 있습니다. 잠시 후 다시 시도해 주세요.",
   };
   return ko[code] ?? `API를 저장할 수 없습니다. (${code})`;
 }
@@ -1479,6 +1518,25 @@ export async function reanalyzeProjectApiMetadata(
     return syncProjectApisFromCareSfd(projectId, { filePaths: raw.paths });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "reanalyze-failed" };
+  }
+}
+
+export async function clearProjectApiMetadataSources(
+  projectId: string,
+): Promise<{ ok: true; cleared: boolean } | { ok: false; error: string }> {
+  const disk = getProjectsApi();
+  if (!disk || typeof disk.clearApiMetadataSources !== "function") return { ok: false, error: "electron-only" };
+  const project = getStoredProjects().find((item) => item.id === projectId);
+  const folderName = project?.folderName?.trim();
+  if (!folderName) return { ok: false, error: "no-folder" };
+  try {
+    const result = await disk.clearApiMetadataSources(folderName) as { ok?: boolean; cleared?: boolean; error?: string };
+    if (!result.ok) return { ok: false, error: result.error ?? "clear-failed" };
+    projectsCache = ((await disk.list()) as unknown[]).map((manifest) => manifestToProject(manifest as ManifestLike));
+    notifyProjectsChanged();
+    return { ok: true, cleared: result.cleared === true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "clear-failed" };
   }
 }
 
@@ -1972,6 +2030,73 @@ export async function setAppProxyConfig(
   return { ok: true, config: next };
 }
 
+export async function resetProxySettings(): Promise<
+  { ok: true; config: AppProxyConfig; restored: boolean } | { ok: false; error: string }
+> {
+  const disk = getProjectsApi();
+  if (disk && typeof disk.resetProxySettings === "function") {
+    const result = await disk.resetProxySettings() as
+      | { ok: true; config: AppProxyConfig; restored: boolean }
+      | { ok: false; error: string };
+    return result;
+  }
+
+  // 브라우저 미리보기에서도 동일한 화면 상태를 확인할 수 있게 연결 설정만 초기화한다.
+  const current = readBrowserAppProxyConfig();
+  const defaults = defaultAppProxyConfig();
+  const config: AppProxyConfig = {
+    ...current,
+    proxyServer: {
+      ...defaults.proxyServer,
+      servingFolderName: current.proxyServer.servingFolderName ?? null,
+    },
+    interceptGateway: defaults.interceptGateway,
+  };
+  writeBrowserAppProxyConfig(config);
+  return { ok: true, config, restored: false };
+}
+
+const USER_DATA_LOCAL_STORAGE_KEYS = [
+  LEGACY_STORAGE_KEY,
+  BROWSER_APIS_STORAGE_KEY,
+  BROWSER_API_RESPONSES_STORAGE_KEY,
+  BROWSER_APP_PROXY_CONFIG_KEY,
+  BROWSER_API_LATENCY_STORAGE_KEY,
+  BROWSER_PROJECT_LINKED_CLIENTS_KEY,
+  "dataforge-recent-requests-seen-at",
+  "dataforge-import-guide-hidden",
+];
+
+export async function resetAllUserData(): Promise<
+  { ok: true; restored: boolean } | { ok: false; error: string }
+> {
+  const disk = getProjectsApi();
+  if (!disk || typeof disk.resetAllUserData !== "function") return { ok: false, error: "electron-only" };
+  try {
+    const result = await disk.resetAllUserData() as { ok?: boolean; restored?: boolean; error?: string };
+    if (!result.ok) return { ok: false, error: result.error ?? "reset-all-failed" };
+
+    if (typeof window !== "undefined") {
+      for (const key of USER_DATA_LOCAL_STORAGE_KEYS) window.localStorage.removeItem(key);
+      for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+        const key = window.localStorage.key(index);
+        if (key?.startsWith("active-api-response:") || key?.startsWith("proxy-api-json-registered:")) {
+          window.localStorage.removeItem(key);
+        }
+      }
+    }
+    projectsCache = [];
+    for (const key of Object.keys(diskEndpointsCache)) delete diskEndpointsCache[key];
+    for (const key of Object.keys(savedResponsesCache)) delete savedResponsesCache[key];
+    notifyProjectApisChanged();
+    notifySavedApiResponsesChanged();
+    notifyProjectsChanged();
+    return { ok: true, restored: result.restored === true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "reset-all-failed" };
+  }
+}
+
 export async function updateProjectLinkedClients(
   projectId: string,
   linkedClients: LinkedClientEntry[],
@@ -2167,6 +2292,14 @@ export type ProjectImportSummary = {
   metadataMappedApiCount?: number;
   metadataUnmappedApiCount?: number;
   metadataUnmappedTrans?: string[];
+  validationIssues?: string[];
+  fileResults?: ProjectImportFileResult[];
+};
+
+export type ProjectImportFileResult = {
+  fileName: string;
+  status: "imported" | "skipped" | "failed";
+  reason?: string;
 };
 
 export type ProjectImportAnalysis = {
@@ -2182,16 +2315,18 @@ export type ProjectImportAnalysis = {
   metadataMappedApiCount?: number;
   metadataUnmappedApiCount?: number;
   metadataUnmappedTrans?: string[];
+  validationIssues?: string[];
+  fileResults?: ProjectImportFileResult[];
 };
 
 export async function analyzeSharedProjectImport(): Promise<
-  { ok: true; analysis: ProjectImportAnalysis } | { ok: false; error: string }
+  { ok: true; analysis: ProjectImportAnalysis } | { ok: false; error: string; validationIssues?: string[] }
 > {
   const disk = getProjectsApi();
   if (!disk) return { ok: false, error: "electron-only" };
   try {
-    const raw = (await disk.analyzeImport()) as { ok?: boolean; analysis?: ProjectImportAnalysis; error?: string };
-    if (!raw.ok || !raw.analysis) return { ok: false, error: raw.error ?? "import-analysis-failed" };
+    const raw = (await disk.analyzeImport()) as { ok?: boolean; analysis?: ProjectImportAnalysis; error?: string; validationIssues?: string[] };
+    if (!raw.ok || !raw.analysis) return { ok: false, error: raw.error ?? "import-analysis-failed", validationIssues: raw.validationIssues };
     return { ok: true, analysis: raw.analysis };
   } catch {
     // Electron 메인 프로세스가 이전 코드로 실행 중이면 새 IPC 핸들러가 아직 없다.
@@ -2242,9 +2377,10 @@ export async function importSharedProject(): Promise<{ ok: boolean; error?: stri
 /** Electron: JSON 파일 선택 → 파일명(확장자 제외)=API 이름, 본문=저장 응답 (여러 개 선택 가능) */
 export async function importProjectApisFromJsonPick(
   projectId: string,
+  options?: { sessionId?: string; conflictPolicy?: "overwrite" | "add" | "skip" },
 ): Promise<
-  | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
-  | { ok: false; error: string; errors?: string[] }
+  | { ok: true; imported: number; updated: number; skipped: number; touchedApiNames: string[]; errors: string[]; fileResults: ProjectImportFileResult[] }
+  | { ok: false; error: string; errors?: string[]; sessionId?: string; conflictFiles?: string[] }
 > {
   const p = getStoredProjects().find((x) => x.id === projectId);
   if (!p) return { ok: false, error: "not-found" };
@@ -2254,15 +2390,20 @@ export async function importProjectApisFromJsonPick(
   if (!disk || typeof disk.importApisJsonPick !== "function") {
     return { ok: false, error: "electron-only" };
   }
-  const raw = await disk.importApisJsonPick(folder);
+  let raw: Awaited<ReturnType<typeof disk.importApisJsonPick>>;
+  try {
+    raw = await disk.importApisJsonPick(folder, options);
+  } catch {
+    return { ok: false, error: "import-failed" };
+  }
   if (!raw || typeof raw !== "object") {
     return { ok: false, error: "import-failed" };
   }
   if (!("ok" in raw) || !raw.ok) {
-    const fail = raw as { error?: string; errors?: string[] };
-    return { ok: false, error: fail.error ?? "import-failed", errors: fail.errors };
+    const fail = raw as { error?: string; errors?: string[]; sessionId?: string; conflictFiles?: string[] };
+    return { ok: false, error: fail.error ?? "import-failed", errors: fail.errors, sessionId: fail.sessionId, conflictFiles: fail.conflictFiles };
   }
-  const ok = raw as { imported: number; touchedApiNames: string[]; errors: string[] };
+  const ok = raw as { imported: number; updated: number; skipped: number; touchedApiNames: string[]; errors: string[]; fileResults: ProjectImportFileResult[] };
   try {
     projectsCache = ((await disk.list()) as unknown[]).map((m) => manifestToProject(m as ManifestLike));
   } catch {
@@ -2274,8 +2415,11 @@ export async function importProjectApisFromJsonPick(
   return {
     ok: true,
     imported: ok.imported,
+    updated: ok.updated ?? 0,
+    skipped: ok.skipped ?? 0,
     touchedApiNames: ok.touchedApiNames ?? [],
     errors: ok.errors ?? [],
+    fileResults: ok.fileResults ?? [],
   };
 }
 
@@ -2504,9 +2648,9 @@ export async function clearMockActiveApiResponseIfMatches(
   apiName: string,
   responseValue: string,
   options?: { alsoKeys?: string[] },
-): Promise<void> {
+): Promise<{ ok: true; cleared: boolean } | { ok: false; error: string }> {
   const rv = responseValue.trim();
-  if (!rv) return;
+  if (!rv) return { ok: true, cleared: false };
   const keys = new Set<string>();
   const primary = apiName.trim();
   if (primary) keys.add(primary);
@@ -2518,11 +2662,10 @@ export async function clearMockActiveApiResponseIfMatches(
     const cfg = await getAppProxyConfig();
     const map = cfg.mockActiveApiResponses ?? {};
     const matched = [...keys].some((k) => map[k]?.responseValue === rv);
-    if (matched) await persistMockActiveApiResponse(primary, null, options);
-  } catch {
-    const browserCur = readBrowserAppProxyConfig();
-    const map = browserCur.mockActiveApiResponses ?? {};
-    const matched = [...keys].some((k) => map[k]?.responseValue === rv);
-    if (matched) await persistMockActiveApiResponse(primary, null, options);
+    if (!matched) return { ok: true, cleared: false };
+    const result = await persistMockActiveApiResponse(primary, null, options);
+    return result.ok ? { ok: true, cleared: true } : result;
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "save-failed" };
   }
 }

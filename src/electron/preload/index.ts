@@ -23,9 +23,10 @@ const projects = {
   syncApisFromSfdModule: (folderName: string, sfdAbsolutePath: string | string[]) =>
     ipcRenderer.invoke("project-fs:syncApisFromSfdModule", folderName, sfdAbsolutePath),
   pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => ipcRenderer.invoke("project-fs:pickInterfaceDefinition", payload),
+  clearApiMetadataSources: (folderName: string) => ipcRenderer.invoke("project-fs:clearApiMetadataSources", folderName),
   deleteApi: (folderName: string, apiId: string) => ipcRenderer.invoke("project-fs:deleteApi", folderName, apiId),
   getResponsesStore: (folderName: string) => ipcRenderer.invoke("project-fs:getResponsesStore", folderName),
-  upsertApiResponse: (folderName: string, apiName: string, payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string> }) =>
+  upsertApiResponse: (folderName: string, apiName: string, payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string>; expectedUpdatedAt?: string }) =>
     ipcRenderer.invoke("project-fs:upsertApiResponse", folderName, apiName, payload),
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => ipcRenderer.invoke("project-fs:deleteApiResponse", folderName, apiName, responseValue),
   getAppProxyConfig: () => ipcRenderer.invoke("project-fs:getAppProxyConfig"),
@@ -60,13 +61,16 @@ const projects = {
     mockTranAliases?: Record<string, string> | null;
     mockProfile?: "legacy-tran-envelope" | "generic-json";
   }) => ipcRenderer.invoke("project-fs:setAppProxyConfig", partial),
+  resetProxySettings: () => ipcRenderer.invoke("project-fs:resetProxySettings"),
+  resetAllUserData: () => ipcRenderer.invoke("project-fs:resetAllUserData"),
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) =>
     ipcRenderer.invoke("project-fs:setLinkedClients", payload),
   getMockProxyStatus: () => ipcRenderer.invoke("mock-proxy:status"),
   getProxyDiagnostics: () => ipcRenderer.invoke("mock-proxy:diagnostics"),
   getRecentProxyRequests: () => ipcRenderer.invoke("mock-proxy:recentRequests"),
   clearRecentProxyRequests: () => ipcRenderer.invoke("mock-proxy:clearRecentRequests"),
-  importApisJsonPick: (folderName: string) => ipcRenderer.invoke("project-fs:importApisJsonPick", folderName),
+  importApisJsonPick: (folderName: string, options?: { sessionId?: string; conflictPolicy?: "overwrite" | "add" | "skip" }) =>
+    ipcRenderer.invoke("project-fs:importApisJsonPick", folderName, options),
 };
 
 const api = { projects };
