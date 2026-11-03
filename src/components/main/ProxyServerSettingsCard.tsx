@@ -7,8 +7,8 @@ import ExpandArrowIcon from "@/assets/svg/ExpandArrowIcon";
 import Btn from "@/components/common/Btn";
 import CheckBox from "@/components/common/CheckBox";
 import Input from "@/components/common/Input";
-import { ConfirmModal } from "@/components/common/modals";
-import { detectServerCommand, getAppProxyConfig, getMockProxyStatus, getProxyDiagnostics, hasProjectDiskApi, pickServerDirectory, prepareProxyTakeover, restoreActiveProxyTakeover, restoreProxyTakeover, setAppProxyConfig, type MockProxyStatus, type ProxyDiagnostics } from "@/libs/projects/store";
+import { ConfirmModal, NoticeModal } from "@/components/common/modals";
+import { detectServerCommand, getAppProxyConfig, getMockProxyStatus, getProxyDiagnostics, hasProjectDiskApi, pickServerDirectory, prepareProxyTakeover, resetProxySettings, restoreActiveProxyTakeover, restoreProxyTakeover, setAppProxyConfig, type MockProxyStatus, type ProxyDiagnostics } from "@/libs/projects/store";
 import type { AppProxyConfig } from "@/types";
 
 interface ProxyServerSettingsCardProps {
@@ -89,6 +89,8 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
   const [runtimeStatus, setRuntimeStatus] = useState<MockProxyStatus | null>(null);
   const [diagnostics, setDiagnostics] = useState<ProxyDiagnostics | null>(null);
   const [takeoverConfirm, setTakeoverConfirm] = useState<{ port: number; detail: string } | null>(null);
+  const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
+  const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [connectionProgress, setConnectionProgress] = useState<ProxyConnectionProgress>(() => ({ stage: "idle", startedAt: null, updatedAt: Date.now() }));
   const operationInFlightRef = useRef(false);
 
@@ -321,6 +323,49 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
     }
   };
 
+  const resetSettings = async (): Promise<void> => {
+    if (operationInFlightRef.current) return;
+    operationInFlightRef.current = true;
+    setSaveBusy(true);
+    clearError();
+    try {
+      const result = await resetProxySettings();
+      if (!result.ok) {
+        showError(setupErrorFromTechnical(
+          result.error.startsWith("restore-failed") ? "restore" : "gateway",
+          result.error,
+          "프록시 설정을 초기화하지 못했습니다.",
+        ));
+        return;
+      }
+      setConfig(result.config);
+      setClientPortDraft("7777");
+      setUpstreamPortDraft("7778");
+      setMockPortDraft("4780");
+      setAutoStartDraft(false);
+      setWorkdirDraft("");
+      setCommandDraft("");
+      setCommandHint("");
+      setAdvancedOpen(false);
+      setDiagnosticsOpen(false);
+      updateConnectionStage("idle");
+      await reloadStatus();
+      setResetNotice(result.restored
+        ? "프록시 설정을 초기화하고 프로젝트 서버를 원래 포트로 복구했습니다.\n가져온 프로젝트와 더미 데이터는 그대로 유지됩니다."
+        : "프록시 설정을 기본값으로 초기화했습니다.\n가져온 프로젝트와 더미 데이터는 그대로 유지됩니다.");
+    } catch (unexpected) {
+      showError(setupErrorFromTechnical(
+        "gateway",
+        unexpected instanceof Error ? unexpected.message : String(unexpected),
+        "프록시 설정 초기화 중 예상하지 못한 오류가 발생했습니다.",
+      ));
+    } finally {
+      setResetConfirmOpen(false);
+      operationInFlightRef.current = false;
+      setSaveBusy(false);
+    }
+  };
+
   if (!config) return <div className="w-full p-8"><p className="typo-body-2-normal text-label-normal">설정을 불러오는 중…</p></div>;
 
   const running = Boolean(runtimeStatus?.interceptGateway?.listening);
@@ -347,6 +392,27 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
           setTakeoverConfirm(null);
           await startProxy(true);
         }}
+      />
+      <ConfirmModal
+        isOpen={resetConfirmOpen}
+        anchorMain
+        title="프록시 설정을 초기화할까요?"
+        message={(
+          <div className="space-y-2 text-left">
+            <p>포트, 서버 폴더, 실행 방법과 자동 연결 설정을 기본값으로 되돌립니다.</p>
+            <p>실행 중인 연결은 종료되며, 가져온 프로젝트와 더미 데이터는 삭제되지 않습니다.</p>
+          </div>
+        )}
+        cancelLabel="취소"
+        confirmLabel="설정 초기화"
+        onClose={() => setResetConfirmOpen(false)}
+        onConfirm={resetSettings}
+      />
+      <NoticeModal
+        isOpen={resetNotice != null}
+        anchorMain
+        message={resetNotice ?? ""}
+        onClose={() => setResetNotice(null)}
       />
       <header className="border-border-enabled flex items-start justify-between gap-3 border-b bg-white px-6 py-5">
         <div>
@@ -490,6 +556,13 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
               </div>
             ) : null}
             {running && autoStartDraft ? <p className="typo-caption-1 text-label-assistant">프로젝트 서버: {upstreamRunning ? "정상 연결됨" : "연결 확인 중"}</p> : null}
+            </div>
+            <div className="flex items-center justify-between gap-4 border-t border-gray-100 pt-4">
+              <div>
+                <p className="typo-body-2-normal text-label-normal font-medium">프록시 설정 초기화</p>
+                <p className="typo-caption-1 text-label-assistant mt-1">포트와 서버 실행 설정만 기본값으로 되돌립니다.</p>
+              </div>
+              <Btn category="secondary" variant size="small" width={112} disabled={saveBusy} onClick={() => setResetConfirmOpen(true)}>초기화</Btn>
             </div>
           </div>
         ) : null}

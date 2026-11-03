@@ -1,23 +1,27 @@
 "use client";
 
 // React
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Components
 import Header from "@/components/shared/Header";
 import ImportProjectIntroModal from "@/components/common/modals/ImportProjectIntroModal";
-import { NoticeModal } from "@/components/common/modals";
+import { ImportProjectResultModal, NoticeModal } from "@/components/common/modals";
 import Modal from "@/components/common/Modal";
 import ProjectsList from "@/components/main/ProjectList";
 import ProjectTab, { type ProjectTabValue } from "@/components/main/ProjectTab";
 import HistoryList from "@/components/main/HistoryList";
 import ProxyServerSettingsCard from "@/components/main/ProxyServerSettingsCard";
+import DataSettingsCard from "@/components/main/DataSettingsCard";
+import Btn from "@/components/common/Btn";
 // Libs
 import { navigateApp } from "@/libs/app-navigation";
 import {
   DUPLICATE_PROJECT_NAME_MESSAGE,
   analyzeSharedProjectImport,
   executeSharedProjectImport,
+  getAppProxyConfig,
+  getMockProxyStatus,
   getStartupProxyRecoveryNotice,
   getProjectHref,
   getStoredProjects,
@@ -25,20 +29,39 @@ import {
   PROJECTS_CHANGED_EVENT,
   readHomeProjectTabFromUrl,
   requestOpenCreateProjectModal,
+  type ProjectImportSummary,
 } from "@/libs/projects/store";
 
 // Types
 import type { Project } from "@/types";
 
+type HomeProxyConnectionState = "disconnected" | "connected" | "attention";
+const IMPORT_GUIDE_HIDDEN_KEY = "dataforge-import-guide-hidden";
+
 export default function HomePage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectTab, setProjectTab] = useState<ProjectTabValue>(() => readHomeProjectTabFromUrl());
   const [importModal, setImportModal] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
-  const [importComplete, setImportComplete] = useState<{ message: string; projectHref: string } | null>(null);
+  const [importComplete, setImportComplete] = useState<{ projectName: string; projectHref: string; summary: ProjectImportSummary } | null>(null);
   const [importIntroOpen, setImportIntroOpen] = useState(false);
   const [proxySettingsOpen, setProxySettingsOpen] = useState(false);
   const [proxySettingsBusy, setProxySettingsBusy] = useState(false);
+  const [dataSettingsOpen, setDataSettingsOpen] = useState(false);
+  const [dataSettingsBusy, setDataSettingsBusy] = useState(false);
   const [startupRecoveryMessage, setStartupRecoveryMessage] = useState("");
+  const [proxyConnectionState, setProxyConnectionState] = useState<HomeProxyConnectionState>("disconnected");
+  const [importBusy, setImportBusy] = useState(false);
+  const importBusyRef = useRef(false);
+
+  const refreshProxyConnectionState = useCallback(async () => {
+    const [config, status] = await Promise.all([getAppProxyConfig(), getMockProxyStatus()]);
+    const configured = Boolean(config.proxyServer.enabled && config.interceptGateway?.enabled);
+    if (!configured) {
+      setProxyConnectionState("disconnected");
+      return;
+    }
+    setProxyConnectionState(status?.listening && status.interceptGateway?.listening ? "connected" : "attention");
+  }, []);
 
   const refreshProjects = useCallback(() => {
     setProjects(getStoredProjects());
@@ -57,7 +80,12 @@ export default function HomePage() {
   const showImportModal = useCallback((message: string) => setImportModal({ open: true, message }), []);
   const closeImportModal = useCallback(() => setImportModal({ open: false, message: "" }), []);
 
-  const showImportError = useCallback((error: string | undefined) => {
+  const showImportError = useCallback((error: string | undefined, validationIssues: string[] = []) => {
+    if (validationIssues.length > 0) {
+      const visible = validationIssues.slice(0, 5);
+      showImportModal(["가져올 수 있는 JSON 응답이 없습니다.", "", ...visible, ...(validationIssues.length > visible.length ? [`외 ${validationIssues.length - visible.length}개`] : [])].join("\n"));
+      return;
+    }
     if (error === "electron-only") showImportModal("Electron 앱에서만 더미 데이터를 가져올 수 있습니다.");
     else if (error === "no-json-files") showImportModal("가져올 수 있는 JSON 응답 파일이 없습니다.");
     else if (error === "invalid-manifest") showImportModal("지원하지 않거나 읽을 수 없는 프로젝트 데이터입니다.");
@@ -69,11 +97,15 @@ export default function HomePage() {
   }, [showImportModal]);
 
   const importProject = useCallback(() => {
+    if (importBusyRef.current) return;
+    importBusyRef.current = true;
+    setImportBusy(true);
     void (async () => {
+      try {
       const analyzed = await analyzeSharedProjectImport();
       if (!analyzed.ok) {
         if (analyzed.error === "cancelled") return;
-        showImportError(analyzed.error);
+        showImportError(analyzed.error, analyzed.validationIssues);
         return;
       }
 
@@ -86,37 +118,41 @@ export default function HomePage() {
 
       refreshProjects();
       const summary = imported.summary ?? analysis;
-      const typeSummary = [
-        `Default ${summary.defaultCount ?? 0}`,
-        `Test ${summary.testCount ?? 0}`,
-        `Error ${summary.errorCount ?? 0}`,
-      ].join(" · ");
-      const metadataSummary = summary.metadataMappedApiCount == null
-        ? ""
-        : ` · API 정보 연결 ${summary.metadataMappedApiCount}개 · 정보 미확인 ${summary.metadataUnmappedApiCount ?? 0}개`;
-      const unmappedTrans = summary.metadataUnmappedTrans ?? [];
-      const visibleUnmapped = unmappedTrans.slice(0, 3);
-      const unmappedSummary = visibleUnmapped.length === 0
-        ? ""
-        : ` (${visibleUnmapped.join(", ")}${unmappedTrans.length > visibleUnmapped.length ? ` 외 ${unmappedTrans.length - visibleUnmapped.length}개` : ""})`;
       setImportComplete({
-        message: `더미 응답 ${summary.responseCount}개를 가져왔습니다. API ${summary.apiCount}개 · ${typeSummary}${metadataSummary}${unmappedSummary}${summary.skippedFileCount > 0 ? ` · 제외 ${summary.skippedFileCount}개` : ""}`,
+        projectName: imported.project.name,
         projectHref: getProjectHref(imported.project),
+        summary,
       });
+      } finally {
+        importBusyRef.current = false;
+        setImportBusy(false);
+      }
     })();
   }, [refreshProjects, showImportError]);
 
-  const handleImportIntroContinue = useCallback(() => {
+  const handleImportIntroContinue = useCallback((skipNextTime: boolean) => {
+    if (skipNextTime) window.localStorage.setItem(IMPORT_GUIDE_HIDDEN_KEY, "true");
     setImportIntroOpen(false);
     importProject();
   }, [importProject]);
 
+  const requestProjectImport = useCallback(() => {
+    if (window.localStorage.getItem(IMPORT_GUIDE_HIDDEN_KEY) === "true") {
+      importProject();
+      return;
+    }
+    setImportIntroOpen(true);
+  }, [importProject]);
+
   useEffect(() => {
     void hydrateProjects();
+    void refreshProxyConnectionState();
     void getStartupProxyRecoveryNotice().then((notice) => {
       if (notice) setStartupRecoveryMessage(notice.message);
     });
-  }, []);
+    const timer = window.setInterval(() => void refreshProxyConnectionState(), 1500);
+    return () => window.clearInterval(timer);
+  }, [refreshProxyConnectionState]);
 
   useEffect(() => {
     refreshProjects();
@@ -133,53 +169,64 @@ export default function HomePage() {
         message={startupRecoveryMessage}
         anchorMain
       />
-      {importComplete ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed top-6 left-1/2 z-[1100] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-4 rounded-3 bg-neutral-900 px-5 py-3 text-sm text-white shadow-lg"
-        >
-          <span>{importComplete.message}</span>
-          <button
-            type="button"
-            className="shrink-0 cursor-pointer font-semibold text-white underline underline-offset-4"
-            onClick={() => navigateApp(importComplete.projectHref)}
-          >
-            가져온 데이터 보기
-          </button>
-          <button
-            type="button"
-            className="shrink-0 cursor-pointer text-lg leading-none text-gray-300 hover:text-white"
-            aria-label="가져오기 완료 알림 닫기"
-            onClick={() => setImportComplete(null)}
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
+      <ImportProjectResultModal
+        isOpen={Boolean(importComplete)}
+        projectName={importComplete?.projectName ?? ""}
+        summary={importComplete?.summary ?? null}
+        onClose={() => setImportComplete(null)}
+        onOpenProject={() => {
+          if (!importComplete) return;
+          navigateApp(importComplete.projectHref);
+          setImportComplete(null);
+        }}
+      />
       <NoticeModal isOpen={importModal.open} onClose={closeImportModal} message={importModal.message} />
       <ImportProjectIntroModal isOpen={importIntroOpen} onClose={() => setImportIntroOpen(false)} onContinue={handleImportIntroContinue} />
-      <Modal isOpen={proxySettingsOpen} onClose={proxySettingsBusy ? undefined : () => setProxySettingsOpen(false)} size="large" panelClassName="max-w-[700px] !overflow-hidden" anchorMain>
+      <Modal isOpen={proxySettingsOpen} onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} size="large" panelClassName="max-w-[700px] !overflow-hidden" anchorMain>
         <div className="max-h-[84vh] overflow-y-auto">
-          <ProxyServerSettingsCard onClose={proxySettingsBusy ? undefined : () => setProxySettingsOpen(false)} onBusyChange={setProxySettingsBusy} />
+          <ProxyServerSettingsCard onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} onBusyChange={setProxySettingsBusy} />
         </div>
+      </Modal>
+      <Modal isOpen={dataSettingsOpen} onClose={dataSettingsBusy ? undefined : () => setDataSettingsOpen(false)} size="medium" panelClassName="max-w-[620px] !overflow-hidden" anchorMain>
+        <DataSettingsCard onClose={() => setDataSettingsOpen(false)} onBusyChange={setDataSettingsBusy} />
       </Modal>
 
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <Header variant="main" title="Project Management" onImportProject={() => setImportIntroOpen(true)} onCreateProject={requestOpenCreateProjectModal} />
+        <Header variant="main" title="Project Management" onImportProject={requestProjectImport} importBusy={importBusy} onCreateProject={requestOpenCreateProjectModal} />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1600px] px-6">
             <div className="mt-8 mb-8">
               <div className="mb-4 flex items-end justify-between gap-3 border-b border-gray-200">
                 <div>{showProjectTabs ? <ProjectTab activeTab={projectTab} onTabChange={setProjectTab} /> : null}</div>
-                <button
-                  type="button"
-                  onClick={() => setProxySettingsOpen(true)}
-                  className="typo-body-2-normal border-border-enabled text-label-normal rounded-3 mb-2 cursor-pointer border px-4 py-2 transition-colors hover:bg-gray-50"
-                >
-                  더미 응답 연결
-                </button>
+                <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+                  <Btn
+                    category="secondary"
+                    variant
+                    size="medium"
+                    width={160}
+                    onClick={() => setDataSettingsOpen(true)}
+                  >
+                    데이터 관리
+                  </Btn>
+                  <Btn
+                    category="secondary"
+                    variant
+                    size="medium"
+                    width={160}
+                    className="relative !justify-center"
+                    startIcon={(
+                      <span
+                        role="status"
+                        aria-label={proxyConnectionState === "connected" ? "연결됨" : proxyConnectionState === "attention" ? "연결 확인 필요" : "연결 안 됨"}
+                        className={`absolute left-5 h-2 w-2 shrink-0 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : proxyConnectionState === "attention" ? "bg-red-500" : "bg-gray-400"}`}
+                      />
+                    )}
+                    onClick={() => setProxySettingsOpen(true)}
+                  >
+                    {proxyConnectionState === "connected" ? "연결 설정" : proxyConnectionState === "attention" ? "연결 확인" : "더미 응답 연결"}
+                  </Btn>
+                </div>
               </div>
               <div className="">
                 <ProjectsList folderId="id" projects={visibleProjects} onProjectsChange={refreshProjects} />

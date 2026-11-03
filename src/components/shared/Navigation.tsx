@@ -48,13 +48,24 @@ function jsonEditorHref(apiName: string, item: ApiResponseItem, editorType: "def
   return `/api/json?state=edit&apiName=${encodeURIComponent(apiName)}&type=${editorType}&responseValue=${encodeURIComponent(item.value)}`;
 }
 
-function JsonEditorResponseNav({ apiName }: { apiName: string }) {
+function JsonEditorResponseNav({ apiName, searchQuery }: { apiName: string; searchQuery: string }) {
   const { localResponses, testResponses, errorResponses } = getApiResponseGroups(apiName);
   const searchParams = typeof window !== "undefined" ? getAppSearchParams() : null;
   const currentResponseValue = searchParams?.get("responseValue") ?? "";
   const currentType = searchParams?.get("type") ?? "default";
 
-  const renderGroup = (sectionTitle: string, items: ApiResponseItem[], editorType: "default" | "test" | "error") => (
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filterResponses = (items: ApiResponseItem[]) => normalizedQuery
+    ? items.filter((item) => [item.label, item.description, item.infoText].some((value) => value?.toLowerCase().includes(normalizedQuery)))
+    : items;
+  const groups = [
+    { title: "로컬 응답", items: filterResponses(localResponses), editorType: "default" as const },
+    { title: "테스트 응답", items: filterResponses(testResponses), editorType: "test" as const },
+    { title: "에러 응답", items: filterResponses(errorResponses), editorType: "error" as const },
+  ];
+  const hasVisibleResponse = groups.some((group) => group.items.length > 0);
+
+  const renderGroup = (sectionTitle: string, items: ApiResponseItem[], editorType: "default" | "test" | "error") => items.length > 0 ? (
     <div key={sectionTitle} className="mb-6 last:mb-0">
       <div className="typo-caption-1 text-label-assistant mb-3 px-1 font-medium tracking-wide">{sectionTitle}</div>
       <div className="flex flex-col gap-1.5">
@@ -65,6 +76,7 @@ function JsonEditorResponseNav({ apiName }: { apiName: string }) {
             <a
               key={item.value}
               href={href}
+              title={[item.label, item.description, item.infoText].filter(Boolean).join(" · ")}
               className={`typo-body-2-normal rounded-3 block px-4 py-3 no-underline transition-colors ${
                 isActive ? "bg-[#13A4EC]/10 text-[#13A4EC]" : "text-label-common bg-white/5 hover:bg-white/10"
               }`}
@@ -76,13 +88,13 @@ function JsonEditorResponseNav({ apiName }: { apiName: string }) {
         })}
       </div>
     </div>
-  );
+  ) : null;
 
   return (
     <div className="flex flex-col">
-      {renderGroup("로컬 응답", localResponses, "default")}
-      {renderGroup("테스트 응답", testResponses, "test")}
-      {renderGroup("에러 응답", errorResponses, "error")}
+      {hasVisibleResponse
+        ? groups.map((group) => renderGroup(group.title, group.items, group.editorType))
+        : <p className="typo-body-2-normal text-label-assistant px-4 py-8 text-center">검색과 일치하는 응답이 없습니다.</p>}
     </div>
   );
 }
@@ -131,10 +143,20 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
     return () => window.removeEventListener(PROJECT_APIS_CHANGED_EVENT, bump);
   }, []);
 
+  useEffect(() => {
+    const compact = window.matchMedia("(max-width: 1180px)");
+    const collapseForSmallWindow = (event: MediaQueryListEvent | MediaQueryList) => {
+      if (event.matches) setIsNavOpen(false);
+    };
+    collapseForSmallWindow(compact);
+    compact.addEventListener("change", collapseForSmallWindow);
+    return () => compact.removeEventListener("change", collapseForSmallWindow);
+  }, []);
+
   return (
     <div
       className={`flex h-full max-h-full min-h-0 shrink-0 flex-col self-stretch overflow-hidden border-r bg-[#2D2D2D] transition-[width,padding] duration-200 ease-in-out ${
-        isNavOpen ? "w-[320px] p-7" : "w-14 overflow-hidden px-3 py-7"
+        isNavOpen ? (isApiJsonPage ? "w-[280px] p-6" : "w-[320px] p-7") : "w-14 overflow-hidden px-3 py-7"
       }`}
     >
       {/* 상단: 즐겨찾기·홈 · 토글 */}
@@ -203,7 +225,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
           {/* 프로젝트 목록 — 뷰포트(최대 1080px) 높이 초과 시 이 영역만 스크롤 */}
           <div className="ds-scrollbar-dark flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
             {isApiJsonPage && jsonEditorApiName ? (
-              <JsonEditorResponseNav apiName={jsonEditorApiName} />
+              <JsonEditorResponseNav apiName={jsonEditorApiName} searchQuery={navSearchInput.value} />
             ) : isApiDetailRoute && resolvedApiName ? (
               <div className="flex flex-col gap-2">
                 {apiEndpointItems.length > 0 && filteredApiEndpointItems.length === 0 ? (
@@ -266,7 +288,7 @@ export default function Navigation({ activeProjectSlug = null, currentApiName = 
           {!isApiDetailRoute && !isApiJsonPage && (
             <div className="shrink-0">
               <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={() => requestOpenCreateProjectModal({ anchorMain: true })} width="100%">
-                프로젝트 생성하기
+                빈 프로젝트 만들기
               </Btn>
             </div>
           )}

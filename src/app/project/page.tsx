@@ -11,7 +11,7 @@ import Btn from "@/components/common/Btn";
 import Input from "@/components/common/Input";
 import ApiEndpointsTable, { type ApiEndpointsTableHandle } from "@/components/project/ApiEndpointsTable";
 import NoApiEndpoints from "@/components/project/NoApiEndpoints";
-import { NoticeModal, RegisterApiModal } from "@/components/common/modals";
+import { ApiImportConflictModal, ConfirmModal, NoticeModal, RegisterApiModal, type ApiImportConflictPolicy } from "@/components/common/modals";
 import Header from "@/components/shared/Header";
 import Navigation from "@/components/shared/Navigation";
 
@@ -21,6 +21,7 @@ import { markRegisteredApiJsonResponse } from "@/libs/datadummy/api";
 import { getProjectBySlug, getProjectRouteSlug } from "@/libs/datadummy/home";
 import {
   formatAddApiUserError,
+  clearProjectApiMetadataSources,
   getEndpointsForProject,
   getSavedApiResponsesForProjectApi,
   importProjectApisFromJsonPick,
@@ -41,8 +42,15 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   const [importNotice, setImportNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [apiSearchQuery, setApiSearchQuery] = useState("");
   const [metadataAnalyzing, setMetadataAnalyzing] = useState(false);
+  const [metadataResetConfirmOpen, setMetadataResetConfirmOpen] = useState(false);
+  const [importConflict, setImportConflict] = useState<{ sessionId: string; fileNames: string[] } | null>(null);
+  const [importConflictBusy, setImportConflictBusy] = useState(false);
+  const [importConflictPolicy, setImportConflictPolicy] = useState<ApiImportConflictPolicy | null>(null);
+  const [apiImporting, setApiImporting] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const apiTableRef = useRef<ApiEndpointsTableHandle>(null);
   const mainScrollRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   const bumpList = useCallback(() => setListTick((t) => t + 1), []);
 
@@ -62,6 +70,56 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
     window.addEventListener(PROJECT_APIS_CHANGED_EVENT, onApis);
     return () => window.removeEventListener(PROJECT_APIS_CHANGED_EVENT, onApis);
   }, [bumpList]);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (event.target instanceof Node && !moreMenuRef.current?.contains(event.target)) setMoreMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreMenuOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [moreMenuOpen]);
+
+  const importSaving = apiImporting || importConflictBusy;
+  const importInteractionLocked = importSaving || Boolean(importConflict);
+
+  useEffect(() => {
+    if (!importSaving) return;
+    const showLeaveNotice = () => {
+      setImportNotice({ open: true, message: "API를 가져오는 중입니다. 저장이 끝난 후 이동해 주세요." });
+    };
+    const onBeforeNavigate = (event: Event) => {
+      event.preventDefault();
+      showLeaveNotice();
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+      showLeaveNotice();
+    };
+    const onLinkClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!target) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showLeaveNotice();
+    };
+    window.addEventListener("dataforge-before-navigate", onBeforeNavigate);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onLinkClick, true);
+    return () => {
+      window.removeEventListener("dataforge-before-navigate", onBeforeNavigate);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onLinkClick, true);
+    };
+  }, [importSaving]);
 
   if (!project) {
     return (
@@ -109,25 +167,61 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
   }, [endpoints, apiSearchQuery, project.id, listTick]);
   const currentProjectSlug = projectSlug ?? getProjectRouteSlug(project);
 
-  const handleImportApiJson = useCallback(async () => {
-    const r = await importProjectApisFromJsonPick(project.id);
-    if (!r.ok) {
-      if (r.error === "cancelled") return;
-      const msg = [formatAddApiUserError(r.error), ...(r.errors?.length ? ["", ...r.errors] : [])].join("\n");
-      setImportNotice({ open: true, message: msg });
-      return;
-    }
-    for (const name of new Set(r.touchedApiNames)) {
-      markRegisteredApiJsonResponse(name);
-    }
+  const applyImportResult = useCallback((r: Extract<Awaited<ReturnType<typeof importProjectApisFromJsonPick>>, { ok: true }>) => {
+    for (const name of new Set(r.touchedApiNames)) markRegisteredApiJsonResponse(name);
     bumpList();
-    if (r.errors.length > 0) {
-      setImportNotice({
-        open: true,
-        message: [`${r.imported}개 파일을 반영했습니다. 일부는 건너뛰었습니다.`, "", ...r.errors].join("\n"),
-      });
+    const lines = r.fileResults.slice(0, 8).map((item) => {
+      const label = item.status === "failed" ? "실패" : item.status === "skipped" ? "건너뜀" : "반영";
+      return `· ${label}: ${item.fileName}${item.reason ? ` — ${item.reason}` : ""}`;
+    });
+    const more = r.fileResults.length > lines.length ? [`· 외 ${r.fileResults.length - lines.length}개`] : [];
+    setImportNotice({
+      open: true,
+      message: [
+        `새 응답 ${r.imported}개 · 업데이트 ${r.updated}개 · 건너뜀 ${r.skipped}개 · 실패 ${r.errors.length}개`,
+        ...(lines.length ? ["", ...lines, ...more] : []),
+      ].join("\n"),
+    });
+  }, [bumpList]);
+
+  const handleImportApiJson = useCallback(async () => {
+    if (apiImporting || importConflict) return;
+    setApiImporting(true);
+    try {
+      const r = await importProjectApisFromJsonPick(project.id);
+      if (!r.ok) {
+        if (r.error === "cancelled") return;
+        if (r.error === "changed-file-conflict" && r.sessionId && r.conflictFiles?.length) {
+          setImportConflict({ sessionId: r.sessionId, fileNames: r.conflictFiles });
+          return;
+        }
+        const msg = [formatAddApiUserError(r.error), ...(r.errors?.length ? ["", ...r.errors] : [])].join("\n");
+        setImportNotice({ open: true, message: msg });
+        return;
+      }
+      applyImportResult(r);
+    } finally {
+      setApiImporting(false);
     }
-  }, [project.id, bumpList]);
+  }, [project.id, apiImporting, importConflict, applyImportResult]);
+
+  const handleImportConflict = useCallback(async (policy: ApiImportConflictPolicy) => {
+    if (!importConflict || importConflictBusy) return;
+    setImportConflictPolicy(policy);
+    setImportConflictBusy(true);
+    try {
+      const r = await importProjectApisFromJsonPick(project.id, { sessionId: importConflict.sessionId, conflictPolicy: policy });
+      setImportConflict(null);
+      if (!r.ok) {
+        setImportNotice({ open: true, message: [formatAddApiUserError(r.error), ...(r.errors?.length ? ["", ...r.errors] : [])].join("\n") });
+        return;
+      }
+      applyImportResult(r);
+    } finally {
+      setImportConflictBusy(false);
+      setImportConflictPolicy(null);
+    }
+  }, [project.id, importConflict, importConflictBusy, applyImportResult]);
 
   const handleReanalyzeMetadata = useCallback(async (chooseNewSources = false) => {
     if (metadataAnalyzing) return;
@@ -157,9 +251,55 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
     }
   }, [project.id, metadataAnalyzing, bumpList]);
 
+  const handleClearMetadataSources = useCallback(async () => {
+    if (metadataAnalyzing) return;
+    setMetadataAnalyzing(true);
+    try {
+      const result = await clearProjectApiMetadataSources(project.id);
+      setMetadataResetConfirmOpen(false);
+      if (!result.ok) {
+        setImportNotice({ open: true, message: `API 정보 파일 연결을 해제하지 못했습니다. (${result.error})` });
+        return;
+      }
+      setImportNotice({
+        open: true,
+        message: result.cleared
+          ? "API 정보 파일 연결을 해제했습니다.\n등록된 API와 더미 응답은 그대로 유지됩니다."
+          : "현재 연결된 API 정보 파일이 없습니다.",
+      });
+    } finally {
+      setMetadataAnalyzing(false);
+    }
+  }, [project.id, metadataAnalyzing]);
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
       <NoticeModal isOpen={importNotice.open} onClose={() => setImportNotice({ open: false, message: "" })} message={importNotice.message} anchorMain />
+      <ApiImportConflictModal
+        isOpen={Boolean(importConflict)}
+        fileNames={importConflict?.fileNames ?? []}
+        busy={importConflictBusy}
+        processingPolicy={importConflictPolicy}
+        onClose={() => {
+          if (!importConflictBusy) setImportConflict(null);
+        }}
+        onSelect={(policy) => void handleImportConflict(policy)}
+      />
+      <ConfirmModal
+        isOpen={metadataResetConfirmOpen}
+        anchorMain
+        title="API 정보 파일 연결을 해제할까요?"
+        message={(
+          <div className="space-y-2 text-left">
+            <p>이 프로젝트에서 API 이름과 설명을 분석할 때 사용한 파일 경로를 제거합니다.</p>
+            <p>현재 등록된 API와 더미 응답은 삭제하거나 변경하지 않습니다.</p>
+          </div>
+        )}
+        cancelLabel="취소"
+        confirmLabel="연결 해제"
+        onClose={() => setMetadataResetConfirmOpen(false)}
+        onConfirm={handleClearMetadataSources}
+      />
       <RegisterApiModal
         isOpen={apiModalOpen}
         onClose={() => {
@@ -194,58 +334,94 @@ export default function ProjectPage({ projectSlug }: ProjectPageProps) {
               <Btn
                 category="primary"
                 size="medium"
+                disabled={importInteractionLocked}
                 startIcon={<PlusIcon />}
                 onClick={() => {
                   setEditingEndpoint(null);
                   setApiModalOpen(true);
                 }}
-                width={180}
+                width={160}
               >
-                API 등록하기
-              </Btn>
-              <Btn
-                category="secondary"
-                variant
-                size="medium"
-                disabled={metadataAnalyzing || endpoints.length === 0}
-                onClick={() => void handleReanalyzeMetadata()}
-                width={180}
-              >
-                {metadataAnalyzing ? "분석 중" : "API 정보 다시 분석"}
-              </Btn>
-              <Btn
-                category="secondary"
-                variant
-                size="medium"
-                disabled={metadataAnalyzing || endpoints.length === 0}
-                onClick={() => void handleReanalyzeMetadata(true)}
-                width={180}
-              >
-                API 정보 파일 변경
+                API 직접 등록
               </Btn>
               <Btn
                 category="secondary"
                 variant
                 size="medium"
                 startIcon={<DownloadIcon className="h-5 w-5 shrink-0" />}
+                disabled={importInteractionLocked}
                 onClick={() => {
                   void handleImportApiJson();
                 }}
                 width={180}
               >
-                API 가져오기
+                {apiImporting ? "가져오는 중..." : importConflictBusy ? "반영하는 중..." : "JSON 응답 가져오기"}
               </Btn>
-              <Btn
-                category="secondary"
-                variant
-                size="medium"
-                startIcon={<DownloadIcon className="h-5 w-5 shrink-0" />}
-                onClick={() => apiTableRef.current?.exportSelected()}
-                width={180}
-                disabled={filteredEndpoints.length === 0}
-              >
-                추출하기
-              </Btn>
+              <div ref={moreMenuRef} className="relative">
+                <Btn
+                  category="secondary"
+                  variant
+                  size="medium"
+                  width={112}
+                  disabled={importInteractionLocked}
+                  onClick={() => setMoreMenuOpen((open) => !open)}
+                >
+                  더보기 ···
+                </Btn>
+                {moreMenuOpen ? (
+                  <div className="border-border-enabled bg-background-white absolute top-[calc(100%+8px)] right-0 z-30 w-[320px] overflow-hidden rounded-xl border py-2 shadow-[0_12px_32px_rgba(15,23,42,0.16)]">
+                    <button
+                      type="button"
+                      disabled={metadataAnalyzing || endpoints.length === 0}
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        void handleReanalyzeMetadata();
+                      }}
+                      className="hover:bg-background-secondary-weak disabled:text-label-assistant w-full cursor-pointer px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="typo-body-2-normal text-label-normal block font-semibold">{metadataAnalyzing ? "분석 중" : "API 정보 다시 분석"}</span>
+                      <span className="typo-caption-1 text-label-assistant mt-1 block">연결된 파일에서 API 이름과 설명을 다시 읽습니다.</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={metadataAnalyzing || endpoints.length === 0}
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        void handleReanalyzeMetadata(true);
+                      }}
+                      className="hover:bg-background-secondary-weak disabled:text-label-assistant w-full cursor-pointer px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="typo-body-2-normal text-label-normal block font-semibold">API 정보 파일 변경</span>
+                      <span className="typo-caption-1 text-label-assistant mt-1 block">이름과 설명을 가져올 다른 모듈 파일을 선택합니다.</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={filteredEndpoints.length === 0}
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        apiTableRef.current?.exportSelected();
+                      }}
+                      className="hover:bg-background-secondary-weak disabled:text-label-assistant w-full cursor-pointer px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="typo-body-2-normal text-label-normal block font-semibold">선택한 API 추출</span>
+                      <span className="typo-caption-1 text-label-assistant mt-1 block">테이블에서 선택한 API와 응답을 파일로 저장합니다.</span>
+                    </button>
+                    <div className="border-border-week my-2 border-t" />
+                    <button
+                      type="button"
+                      disabled={metadataAnalyzing}
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        setMetadataResetConfirmOpen(true);
+                      }}
+                      className="hover:bg-background-negative-weak w-full cursor-pointer px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="typo-body-2-normal text-label-negative block font-semibold">API 정보 연결 해제</span>
+                      <span className="typo-caption-1 text-label-assistant mt-1 block">등록 데이터는 유지하고 연결된 파일 경로만 제거합니다.</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
           {endpoints.length > 0 ? (
