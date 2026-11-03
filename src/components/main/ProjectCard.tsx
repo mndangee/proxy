@@ -37,13 +37,17 @@ export default function ProjectCard(props: IProjectCardProps) {
   const [zipExportModal, setZipExportModal] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [deleteErrorOpen, setDeleteErrorOpen] = useState(false);
   const [deleteErrorMessage, setDeleteErrorMessage] = useState("");
+  const [exporting, setExporting] = useState(false);
   const projectPath = getProjectHref(project);
 
   const showZipExportModal = (message: string) => setZipExportModal({ open: true, message });
   const closeZipExportModal = () => setZipExportModal({ open: false, message: "" });
 
   const handleExportZip = () => {
+    if (exporting) return;
     void (async () => {
+      setExporting(true);
+      try {
       const folder = project.folderName;
       if (!folder) {
         showZipExportModal("디스크에 저장된 프로젝트만 ZIP으로 추출할 수 있습니다. Electron에서 만든 프로젝트를 사용해 주세요.");
@@ -59,6 +63,9 @@ export default function ProjectCard(props: IProjectCardProps) {
         return;
       }
       showZipExportModal("저장이 완료되었습니다");
+      } finally {
+        setExporting(false);
+      }
     })();
   };
 
@@ -68,19 +75,20 @@ export default function ProjectCard(props: IProjectCardProps) {
 
   return (
     <>
-      <a
-        href={projectPath}
-        className="bg-background-white rounded-5 border-border-enabled relative block h-[150px] w-[375px] cursor-pointer border p-7 no-underline shadow-sm transition-shadow hover:shadow-md"
-      >
-        <div className="flex items-start justify-between gap-2">
+      <article className="bg-background-white rounded-5 border-border-enabled relative block h-[168px] w-full min-w-0 border p-6 shadow-sm transition-shadow hover:shadow-md">
+        <a href={projectPath} className="absolute inset-0 z-0 rounded-[inherit]" aria-label={`${project.name} 프로젝트 열기`} />
+        <div className="pointer-events-none relative z-10 flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="typo-heading-2 text-label-normal truncate font-bold">{project.name}</div>
             {project.description ? (
               <p className="typo-caption-1 text-label-assistant mt-1 line-clamp-2">{project.description}</p>
             ) : null}
           </div>
-          <div
-            className="text-label-assistant shrink-0"
+          <button
+            type="button"
+            aria-label={isFavorite ? "즐겨찾기 해제" : "즐겨찾기에 추가"}
+            aria-pressed={isFavorite}
+            className="text-label-assistant hover:bg-background-secondary-weak pointer-events-auto shrink-0 cursor-pointer rounded p-1 transition-colors"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -99,16 +107,17 @@ export default function ProjectCard(props: IProjectCardProps) {
             }}
           >
             {isFavorite ? <FillStarIcon /> : <StarIcon />}
-          </div>
+          </button>
         </div>
-        <div className="typo-body-2-normal text-label-assistant mt-3">마지막 업데이트 {formatProjectUpdatedLabel(project.updatedAt)}</div>
+        <div className="typo-body-2-normal text-label-assistant pointer-events-none relative z-10 mt-3">마지막 업데이트 {formatProjectUpdatedLabel(project.updatedAt)}</div>
 
-        <div className="absolute right-7 bottom-7 flex items-center gap-1">
+        <div className="absolute right-6 bottom-6 z-10 flex items-center gap-1">
           <button
             type="button"
             className="text-label-assistant hover:text-label-neutral flex h-7 w-7 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0"
             aria-label="프로젝트 ZIP 추출"
-            title="ZIP 추출"
+            title={exporting ? "추출 중" : "ZIP 추출"}
+            disabled={exporting}
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -117,8 +126,10 @@ export default function ProjectCard(props: IProjectCardProps) {
           >
             <DownloadIcon className="shrink-0" />
           </button>
-          <div
-            className="text-label-assistant hover:text-label-neutral flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center"
+          <button
+            type="button"
+            aria-label="프로젝트 삭제"
+            className="text-label-assistant hover:text-label-neutral flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded bg-transparent"
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
@@ -126,9 +137,9 @@ export default function ProjectCard(props: IProjectCardProps) {
             }}
           >
             <DeleteIcon />
-          </div>
+          </button>
         </div>
-      </a>
+      </article>
 
       <NoticeModal isOpen={zipExportModal.open} onClose={closeZipExportModal} message={zipExportModal.message} />
       <NoticeModal
@@ -143,7 +154,7 @@ export default function ProjectCard(props: IProjectCardProps) {
         title="프로젝트 삭제"
         message="삭제하면 복구할 수 없습니다. 삭제하시겠습니까?"
         cancelLabel="취소"
-        confirmLabel="확인"
+        confirmLabel="삭제"
         onConfirm={async () => {
           const r = await deleteProject(project.id);
           if (!r.ok) {

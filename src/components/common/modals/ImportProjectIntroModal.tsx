@@ -1,21 +1,35 @@
 "use client";
 
+"use client";
+
+import { useState } from "react";
+
 // Components
 import Btn from "@/components/common/Btn";
+import CheckBox, { type checkBoxObjectType } from "@/components/common/CheckBox";
 import Modal from "@/components/common/Modal";
 
 export interface ImportProjectIntroModalProps {
   isOpen: boolean;
   onClose: () => void;
   /** 안내 확인 후 — 시스템 파일·폴더 선택 및 가져오기 진행 */
-  onContinue: () => void;
+  onContinue: (skipNextTime: boolean) => void;
 }
 
+const SKIP_NEXT_TIME_KEY = "skip-next-time";
+
 export default function ImportProjectIntroModal({ isOpen, onClose, onContinue }: ImportProjectIntroModalProps) {
+  const [skipNextTime, setSkipNextTime] = useState<checkBoxObjectType>({ [SKIP_NEXT_TIME_KEY]: true });
+
+  const resetAndClose = () => {
+    setSkipNextTime({ [SKIP_NEXT_TIME_KEY]: true });
+    onClose();
+  };
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={resetAndClose}
       size="medium"
       showCloseBtn
       anchorMain
@@ -50,14 +64,31 @@ export default function ImportProjectIntroModal({ isOpen, onClose, onContinue }:
           </div>
 
           <p className="typo-caption-1 text-label-assistant mt-4">가져온 데이터는 하나의 작업 공간으로 묶어 저장됩니다.</p>
+          <CheckBox
+            className="mt-5"
+            category="checkbox"
+            size="small"
+            label="다음부터 안내 없이 바로 파일 선택"
+            value={SKIP_NEXT_TIME_KEY}
+            checkBoxStateList={skipNextTime}
+            setCheckBoxStateList={setSkipNextTime}
+          />
         </div>
 
         <footer className="border-border-enabled border-t bg-gray-50 px-7 py-4">
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <Btn category="secondary" variant width={120} onClick={onClose}>
+            <Btn category="secondary" variant width={120} onClick={resetAndClose}>
               취소
             </Btn>
-            <Btn category="primary" width={168} onClick={onContinue}>
+            <Btn
+              category="primary"
+              width={168}
+              onClick={() => {
+                const shouldSkip = Boolean(skipNextTime[SKIP_NEXT_TIME_KEY]);
+                setSkipNextTime({ [SKIP_NEXT_TIME_KEY]: true });
+                onContinue(shouldSkip);
+              }}
+            >
               파일·폴더 선택
             </Btn>
           </div>
