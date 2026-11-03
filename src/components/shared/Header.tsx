@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 // Assets
-import PlusIcon from "@/assets/svg/PlusIcon";
 import SearchIcon from "@/assets/svg/SearchIcon";
 
 // Components
@@ -23,6 +22,7 @@ export interface HeaderProps {
   onCreateProject?: () => void;
   /** 메인 전용: 「새 프로젝트 만들기」 왼쪽에 표시되는 가져오기 (선택) */
   onImportProject?: () => void;
+  importBusy?: boolean;
   /** 서브 전용: 검색 입력 시 (선택) */
   onSearch?: (value: string) => void;
 }
@@ -41,14 +41,14 @@ export default function Header({ className = "", variant = "sub", ...props }: He
             <div className="typo-title-3 text-label-normal">{props.title}</div>
             {(props.onImportProject != null || props.onCreateProject != null) && (
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-3">
-                {props.onImportProject != null && (
-                  <Btn category="secondary" variant size="medium" width={MAIN_HEADER_ACTION_BTN_WIDTH} onClick={props.onImportProject}>
-                    더미 데이터 가져오기
+                {props.onCreateProject != null && (
+                  <Btn category="secondary" variant size="medium" onClick={props.onCreateProject} width={MAIN_HEADER_ACTION_BTN_WIDTH}>
+                    빈 프로젝트 만들기
                   </Btn>
                 )}
-                {props.onCreateProject != null && (
-                  <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={props.onCreateProject} width={MAIN_HEADER_ACTION_BTN_WIDTH}>
-                    새 프로젝트 만들기
+                {props.onImportProject != null && (
+                  <Btn category="primary" size="medium" width={MAIN_HEADER_ACTION_BTN_WIDTH} disabled={props.importBusy} onClick={props.onImportProject}>
+                    {props.importBusy ? "가져오는 중..." : "더미 데이터 가져오기"}
                   </Btn>
                 )}
               </div>

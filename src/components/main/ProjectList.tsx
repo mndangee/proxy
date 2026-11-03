@@ -22,7 +22,7 @@ export default function ProjectsList(props: IProjectListProps) {
     <div className="relative w-full">
       {isLoading && <Loader />}
       {props.projects.length > 0 ? (
-        <div className="mt-9 flex flex-wrap gap-6">
+        <div className="mt-9 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {props.projects.map((project) => (
             <ProjectCard key={project.id} project={project} setIsLoading={setIsLoading} onProjectsChange={props.onProjectsChange} />
           ))}

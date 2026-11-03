@@ -1,7 +1,7 @@
 "use client";
 
 // React
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 // Assets
 import EditIcon from "@/assets/svg/EditIcon";
@@ -243,6 +243,7 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
   const [expandedApiId, setExpandedApiId] = useState<string | null>(null);
   const [activeResponses, setActiveResponses] = useState<Record<string, MockActiveApiResponseRef>>({});
   const [applyingResponseValue, setApplyingResponseValue] = useState<string | null>(null);
+  const responseApplyInFlightRef = useRef(false);
 
   const sortedEndpoints = useMemo(() => {
     if (sortField === "created") return sortApiEndpointsByCreatedAt(endpoints, createdSort);
@@ -413,11 +414,21 @@ const ApiEndpointsTable = forwardRef<ApiEndpointsTableHandle, ApiEndpointsTableP
                     className="typo-caption-1 border-border-primary text-label-primary rounded-3 cursor-pointer border px-3 py-2 disabled:cursor-wait disabled:opacity-50"
                     onClick={() => {
                       void (async () => {
+                        if (responseApplyInFlightRef.current) return;
+                        responseApplyInFlightRef.current = true;
                         setApplyingResponseValue(response.value);
-                        await persistMockActiveApiResponse(endpoint.name, { responseValue: response.value, editorType: response.editorType }, { alsoKeys: endpoint.tran && endpoint.tran !== endpoint.name ? [endpoint.tran] : [] });
-                        const next = { responseValue: response.value, editorType: response.editorType };
-                        setActiveResponses((current) => ({ ...current, [endpoint.name]: next, ...(endpoint.tran ? { [endpoint.tran]: next } : {}) }));
-                        setApplyingResponseValue(null);
+                        try {
+                          const applied = await persistMockActiveApiResponse(endpoint.name, { responseValue: response.value, editorType: response.editorType }, { alsoKeys: endpoint.tran && endpoint.tran !== endpoint.name ? [endpoint.tran] : [] });
+                          if (!applied.ok) {
+                            showNotice(`응답을 적용하지 못했습니다. (${applied.error})`);
+                            return;
+                          }
+                          const next = { responseValue: response.value, editorType: response.editorType };
+                          setActiveResponses((current) => ({ ...current, [endpoint.name]: next, ...(endpoint.tran ? { [endpoint.tran]: next } : {}) }));
+                        } finally {
+                          responseApplyInFlightRef.current = false;
+                          setApplyingResponseValue(null);
+                        }
                       })();
                     }}
                   >

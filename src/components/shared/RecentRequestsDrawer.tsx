@@ -7,9 +7,10 @@ import CloseIcon from "@/assets/svg/CloseIcon";
 import HistoryIcon from "@/assets/svg/HistoryIcon";
 import Btn from "@/components/common/Btn";
 import { ConfirmModal, NoticeModal } from "@/components/common/modals";
-import { navigateApp } from "@/libs/app-navigation";
+import { getAppPathname, navigateApp } from "@/libs/app-navigation";
 import {
   clearRecentProxyRequests,
+  getAppProxyConfig,
   getEndpointsForProject,
   getRecentProxyRequests,
   getStoredProjects,
@@ -25,22 +26,37 @@ function isTranApiRequest(request: ProxyRequestRecord): boolean {
   }
 }
 
-function mockApiDetailHref(request: ProxyRequestRecord): string | null {
-  if (request.result !== "mock") return null;
+type RequestApiMetadata = { name: string; description: string };
 
-  let apiName = request.apiName?.trim() ?? "";
-  if (!apiName) {
-    const lookupKey = (request.tranId || apiName).trim().toLowerCase();
-    for (const project of getStoredProjects()) {
-      const endpoint = getEndpointsForProject(project.id).find((item) =>
-        item.name.trim().toLowerCase() === lookupKey || item.tran.trim().toLowerCase() === lookupKey,
+function findRequestApiMetadata(request: ProxyRequestRecord, servingFolderName: string | null): RequestApiMetadata | null {
+  const requestApiName = request.apiName?.trim() ?? "";
+  const tranId = request.tranId?.trim() ?? "";
+  const normalizedApiName = requestApiName.toLowerCase();
+  const normalizedTranId = tranId.toLowerCase();
+
+  const projects = getStoredProjects();
+  const orderedProjects = servingFolderName
+    ? [...projects].sort((a, b) => Number(b.folderName === servingFolderName) - Number(a.folderName === servingFolderName))
+    : projects;
+  for (const project of orderedProjects) {
+    const endpoint = getEndpointsForProject(project.id).find((item) => {
+      const name = item.name.trim().toLowerCase();
+      const tran = item.tran.trim().toLowerCase();
+      return Boolean(
+        (normalizedApiName && name === normalizedApiName)
+        || (normalizedTranId && tran === normalizedTranId),
       );
-      if (!endpoint) continue;
-      apiName = endpoint.name;
-      break;
-    }
+    });
+    if (endpoint) return { name: endpoint.name.trim(), description: endpoint.description.trim() };
   }
 
+  return requestApiName ? { name: requestApiName, description: "" } : null;
+}
+
+function mockApiDetailHref(request: ProxyRequestRecord, metadata: RequestApiMetadata | null): string | null {
+  if (request.result !== "mock") return null;
+
+  const apiName = metadata?.name ?? "";
   if (!apiName) return null;
   return `/api/${encodeURIComponent(apiName)}`;
 }
@@ -79,6 +95,8 @@ export default function RecentRequestsDrawer(): JSX.Element {
   const [seenThroughMs, setSeenThroughMs] = useState(0);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [clearErrorOpen, setClearErrorOpen] = useState(false);
+  const [servingFolderName, setServingFolderName] = useState<string | null>(null);
+  const [currentPath, setCurrentPath] = useState(() => getAppPathname());
 
   useEffect(() => {
     setPortalTarget(document.body);
@@ -87,9 +105,22 @@ export default function RecentRequestsDrawer(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    const syncPath = () => setCurrentPath(getAppPathname());
+    window.addEventListener("hashchange", syncPath);
+    window.addEventListener("popstate", syncPath);
+    window.addEventListener("dataforge-before-navigate", syncPath);
+    return () => {
+      window.removeEventListener("hashchange", syncPath);
+      window.removeEventListener("popstate", syncPath);
+      window.removeEventListener("dataforge-before-navigate", syncPath);
+    };
+  }, []);
+
+  useEffect(() => {
     const reload = async (): Promise<void> => {
-      const next = await getRecentProxyRequests();
+      const [next, config] = await Promise.all([getRecentProxyRequests(), getAppProxyConfig()]);
       setRequests(next.filter(isTranApiRequest));
+      setServingFolderName(config.proxyServer.servingFolderName ?? null);
     };
     void reload();
     const timer = window.setInterval(() => void reload(), 1500);
@@ -129,6 +160,7 @@ export default function RecentRequestsDrawer(): JSX.Element {
 
   const requestGroups = groupRequestsByDate(requests);
   const unreadCount = requests.filter((request) => new Date(request.timestamp).getTime() > seenThroughMs).length;
+  const fabBottom = currentPath === "/api/json" ? 104 : 64;
 
   if (!portalTarget) return <></>;
 
@@ -157,7 +189,7 @@ export default function RecentRequestsDrawer(): JSX.Element {
       <button
         type="button"
         className={`bg-background-primary hover:bg-background-primary-hover fixed flex h-14 w-14 cursor-pointer items-center justify-center rounded-full text-white shadow-lg transition-[opacity,transform,box-shadow] duration-200 hover:scale-105 hover:shadow-xl ${open ? "pointer-events-none translate-x-4 opacity-0" : "translate-x-0 opacity-100"}`}
-        style={{ right: 20, bottom: 64, zIndex: 900, backgroundColor: "#0057FF" }}
+        style={{ right: 20, bottom: fabBottom, zIndex: 900, backgroundColor: "#0057FF" }}
         aria-label="최근 요청 패널 열기"
         title="최근 요청"
         aria-expanded={open}
@@ -221,7 +253,8 @@ export default function RecentRequestsDrawer(): JSX.Element {
                   <div className="space-y-3">
               {group.requests.map((request) => {
                 const resultText = request.result === "mock" ? "더미 응답" : request.result === "upstream" ? "실제 서버" : "실패";
-                const apiDetailHref = mockApiDetailHref(request);
+                const apiMetadata = findRequestApiMetadata(request, servingFolderName);
+                const apiDetailHref = mockApiDetailHref(request, apiMetadata);
                 const canEditMock = Boolean(apiDetailHref);
                 const openMockEditor = (): void => {
                   if (!apiDetailHref) return;
@@ -246,6 +279,15 @@ export default function RecentRequestsDrawer(): JSX.Element {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="typo-body-1-normal text-label-normal truncate font-bold" title={request.tranId || "트랜 ID 없음"}>{request.tranId || "트랜 ID 확인 불가"}</p>
+                        {apiMetadata?.name ? (
+                          <p
+                            className="typo-caption-1 text-label-assistant mt-1 truncate"
+                            title={[apiMetadata.name, apiMetadata.description].filter(Boolean).join(" · ")}
+                          >
+                            <span className="text-label-normal font-medium">{apiMetadata.name}</span>
+                            {apiMetadata.description ? <span> · {apiMetadata.description}</span> : null}
+                          </p>
+                        ) : null}
                         <p className="typo-caption-1 text-label-assistant mt-1">POST /api</p>
                       </div>
                       <span className={`typo-caption-1 shrink-0 font-semibold ${request.result === "mock" ? "text-blue-700" : request.result === "upstream" ? "text-emerald-700" : "text-red-700"}`}>{resultText}</span>
