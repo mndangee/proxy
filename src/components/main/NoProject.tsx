@@ -21,7 +21,7 @@ export default function NoProject(_props: INoHistoryProps) {
       <FolderIcon />
       <div className="typo-title-3 mt-7 mb-8 font-bold">프로젝트가 없습니다</div>
       <Btn category="primary" size="medium" startIcon={<PlusIcon />} onClick={requestOpenCreateProjectModal} width={240}>
-        프로젝트 생성하기
+        빈 프로젝트 만들기
       </Btn>
     </div>
   );
