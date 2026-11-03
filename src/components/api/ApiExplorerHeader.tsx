@@ -1,8 +1,5 @@
 "use client";
 
-// React
-import { useState } from "react";
-
 // Assets
 import StarIcon from "@/assets/svg/StarIcon";
 
@@ -10,8 +7,6 @@ import StarIcon from "@/assets/svg/StarIcon";
 import Btn from "@/components/common/Btn";
 
 import { navigateApp } from "@/libs/app-navigation";
-
-export type ApiExplorerViewMode = "definition" | "settings";
 
 export interface ApiExplorerHeaderProps {
   className?: string;
@@ -21,9 +16,9 @@ export interface ApiExplorerHeaderProps {
   currentResponseValue?: string | null;
   /** 제목 아래 설명 */
   subtext?: string;
-  /** 모드 변경 시 (선택, 더미 토글 외 확장용) */
-  onModeChange?: (mode: ApiExplorerViewMode) => void;
-  /** JSON 붙여넣기·파일 가져오기 등 (없으면 definition 모드만 전환) */
+  /** 빈 응답 편집 화면 열기 */
+  onNewResponseClick?: () => void;
+  /** JSON 파일 가져오기 */
   onJsonAddClick?: () => void;
   onSettingsClick?: () => void;
 }
@@ -34,47 +29,48 @@ export default function ApiExplorerHeader({
   currentType = "default",
   currentResponseValue = null,
   subtext,
-  onModeChange,
+  onNewResponseClick,
   onJsonAddClick,
   onSettingsClick,
 }: ApiExplorerHeaderProps) {
-  const [mode, setMode] = useState<ApiExplorerViewMode>("definition");
-
-  const setModeAndNotify = (next: ApiExplorerViewMode) => {
-    setMode(next);
-    onModeChange?.(next);
-  };
-
   return (
     <header className={`bg-background-white w-full min-w-0 py-6 ${className}`}>
-      <div className="mx-auto flex w-full max-w-[1600px] items-start justify-between gap-4 px-6">
-        <div className="relative pl-9">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col items-stretch justify-between gap-5 px-6 lg:flex-row lg:items-start">
+        <div className="relative min-w-0 pl-9">
           <div className="text-label-assistant absolute top-3 left-0">
             <StarIcon className="h-[28px] w-[28px]" />
           </div>
-          <div className="typo-title-2 text-label-normal truncate font-bold">{title}</div>
-          <p className="typo-body-2-normal text-label-assistant mt-1">{subtext}</p>
+          <div className="typo-title-2 text-label-normal break-all font-bold">{title}</div>
+          <p className="typo-body-2-normal text-label-assistant mt-1 break-words">{subtext}</p>
         </div>
 
-        <div className="flex shrink-0 gap-3">
+        <div className="grid w-full shrink-0 grid-cols-1 gap-2 sm:grid-cols-3 lg:w-auto lg:gap-3">
           <Btn
             category="primary"
             size="medium"
-            variant
-            width={140}
-            className={mode === "definition" ? "!font-semibold" : ""}
-            onClick={() => {
-              setModeAndNotify("definition");
-              onJsonAddClick?.();
-            }}
+            width="100%"
+            className="lg:!w-[140px]"
+            onClick={() => onNewResponseClick?.()}
           >
-            json 추가하기
+            새 응답 추가
           </Btn>
           <Btn
             category="primary"
             size="medium"
-            width={140}
-            className=""
+            variant
+            width="100%"
+            className="lg:!w-[150px]"
+            onClick={() => onJsonAddClick?.()}
+          >
+            JSON 파일 가져오기
+          </Btn>
+          <Btn
+            category="primary"
+            size="medium"
+            variant
+            width="100%"
+            className="lg:!w-[120px]"
+            disabled={!currentResponseValue}
             onClick={() => {
               if (onSettingsClick) {
                 onSettingsClick();
@@ -85,7 +81,7 @@ export default function ApiExplorerHeader({
               );
             }}
           >
-            더미설정
+            더미 설정
           </Btn>
         </div>
       </div>
