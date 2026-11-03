@@ -8,7 +8,7 @@ import ApiExplorerHeader from "@/components/api/ApiExplorerHeader";
 import ApiResponseLatencyField from "@/components/api/ApiResponseLatencyField";
 import ApiResponseSection from "@/components/api/ApiResponseSection";
 import EmptyApiJsonResponseState from "@/components/api/EmptyApiJsonResponseState";
-import { ApiJsonImportModal, NoticeModal } from "@/components/common/modals";
+import { NoticeModal } from "@/components/common/modals";
 import Navigation from "@/components/shared/Navigation";
 
 // Libs
@@ -23,7 +23,9 @@ import {
   hasRegisteredApiJsonResponse,
   markRegisteredApiJsonResponse,
   setStoredActiveApiResponse,
+  tryParseApiResponseExportBundle,
 } from "@/libs/datadummy/api";
+import { storeApiResponseEditorDraft } from "@/libs/datadummy/editor-draft";
 import {
   deleteSavedApiResponse,
   formatSaveApiResponseUserError,
@@ -37,7 +39,6 @@ import {
   PROJECT_APIS_CHANGED_EVENT,
   PROJECT_API_RESPONSES_CHANGED_EVENT,
   setStoredApiLatencyMs,
-  upsertSavedApiResponse,
 } from "@/libs/projects/store";
 
 const MAX_LATENCY_SECONDS = 300;
@@ -77,16 +78,18 @@ function apiNameFromAppPath(): string {
 export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
   const resolvedApiName = apiName || apiNameFromAppPath();
   const mainScrollRef = useRef<HTMLDivElement>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
   const [apisTick, setApisTick] = useState(0);
   const [responseUiTick, setResponseUiTick] = useState(0);
   const [clientReady, setClientReady] = useState(false);
   const [checkedValue, setCheckedValue] = useState("");
-  const [jsonImportOpen, setJsonImportOpen] = useState(false);
   const [deleteErrorNotice, setDeleteErrorNotice] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [latencyInput, setLatencyInput] = useState("0");
   const [latencyApplyBusy, setLatencyApplyBusy] = useState(false);
   const [latencyAppliedHint, setLatencyAppliedHint] = useState<string | null>(null);
+  const [responseApplyBusy, setResponseApplyBusy] = useState(false);
   const latencyLoadSeqRef = useRef(0);
+  const responseApplyInFlightRef = useRef(false);
 
   useEffect(() => {
     const bump = () => setApisTick((t) => t + 1);
@@ -172,51 +175,52 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
     })();
   };
 
+  const importJsonFile = async (file: File): Promise<void> => {
+    try {
+      const text = await file.text();
+      if (!text.trim()) {
+        setDeleteErrorNotice({ open: true, message: "선택한 JSON 파일이 비어 있습니다." });
+        return;
+      }
+
+      const parsed = JSON.parse(text) as unknown;
+      const bundle = tryParseApiResponseExportBundle(parsed);
+      const fileTitle = file.name.replace(/\.json$/i, "").trim() || "가져온 응답";
+      const draftId = storeApiResponseEditorDraft(bundle ?? {
+        title: fileTitle,
+        description: "",
+        editorType: "default",
+        configuration: JSON.stringify(parsed, null, 2),
+        queryParams: {},
+      });
+      const editorType = bundle?.editorType ?? "default";
+      navigateApp(
+        `/api/json?state=new&apiName=${encodeURIComponent(resolvedApiName)}&type=${editorType}&draftId=${encodeURIComponent(draftId)}`,
+      );
+    } catch (error) {
+      setDeleteErrorNotice({
+        open: true,
+        message: error instanceof SyntaxError
+          ? "올바른 JSON 파일이 아닙니다. 파일 형식을 확인해 주세요."
+          : "JSON 파일을 읽지 못했습니다. 다시 선택해 주세요.",
+      });
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 overflow-x-hidden">
       <Navigation activeProjectSlug={activeProjectSlug} currentApiName={resolvedApiName} onNewProject={() => navigateApp("/")} />
       <div id="app-main" className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <NoticeModal isOpen={deleteErrorNotice.open} onClose={() => setDeleteErrorNotice({ open: false, message: "" })} message={deleteErrorNotice.message} anchorMain />
-        <ApiJsonImportModal
-          isOpen={jsonImportOpen}
-          onClose={() => setJsonImportOpen(false)}
-          defaultTitle="가져온 응답"
-          onConfirm={async ({ label, description, editorType, configuration, queryParams }) => {
-            if (!endpoint) {
-              throw new Error("등록된 API가 아니어서 저장할 수 없습니다.");
-            }
-            const p = getProjectForApiName(resolvedApiName);
-            if (!p) {
-              throw new Error("프로젝트에 등록된 API를 찾을 수 없습니다.");
-            }
-            const result = await upsertSavedApiResponse(p.id, resolvedApiName, {
-              value: null,
-              label,
-              description,
-              editorType,
-              configuration,
-              queryParams,
-            });
-            if (!result.ok) {
-              throw new Error(formatSaveApiResponseUserError(result.error));
-            }
-            const activeType = editorType === "test" ? "test" : editorType === "error" ? "error" : "default";
-            setStoredActiveApiResponse(resolvedApiName, {
-              apiName: resolvedApiName,
-              responseValue: result.value,
-              type: activeType,
-              title: label,
-              description,
-              configuration,
-            });
-            void persistMockActiveApiResponse(
-              resolvedApiName,
-              { responseValue: result.value, editorType: activeType },
-              { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
-            );
-            markRegisteredApiJsonResponse(resolvedApiName);
-            setCheckedValue(result.value);
-            setResponseUiTick((t) => t + 1);
+        <input
+          ref={jsonFileInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={(event) => {
+            const input = event.currentTarget;
+            const file = input.files?.[0];
+            if (file) void importJsonFile(file).finally(() => { input.value = ""; });
           }}
         />
         <div className="border-border-enabled bg-background-white border-b">
@@ -241,7 +245,10 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
             subtext={explorerSubtext}
             currentType={activeResponse.type}
             currentResponseValue={activeResponse.responseValue}
-            onJsonAddClick={() => setJsonImportOpen(true)}
+            onNewResponseClick={() => {
+              navigateApp(`/api/json?state=new&apiName=${encodeURIComponent(resolvedApiName)}&type=default`);
+            }}
+            onJsonAddClick={() => jsonFileInputRef.current?.click()}
             onSettingsClick={() => {
               navigateApp(getJsonEditorHrefForSelectedValue(resolvedApiName, checkedValue));
             }}
@@ -279,23 +286,36 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
                 checkedValue={checkedValue}
                 setCheckedValue={setCheckedValue}
                 activeResponse={activeResponse}
-                onApplyActiveResponse={(item: ApiResponseItem) => {
-                  const editorType = item.type === "local" ? "default" : item.type === "test" ? "test" : "error";
-                  setStoredActiveApiResponse(resolvedApiName, {
-                    apiName: resolvedApiName,
-                    responseValue: item.value,
-                    type: editorType,
-                    title: item.label,
-                    description: item.description,
-                    configuration: item.configuration,
-                  });
-                  void persistMockActiveApiResponse(
-                    resolvedApiName,
-                    { responseValue: item.value, editorType },
-                    { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
-                  );
-                  markRegisteredApiJsonResponse(resolvedApiName);
-                  setResponseUiTick((t) => t + 1);
+                applyBusy={responseApplyBusy}
+                onApplyActiveResponse={async (item: ApiResponseItem) => {
+                  if (responseApplyInFlightRef.current) return;
+                  responseApplyInFlightRef.current = true;
+                  setResponseApplyBusy(true);
+                  try {
+                    const editorType = item.type === "local" ? "default" : item.type === "test" ? "test" : "error";
+                    const applied = await persistMockActiveApiResponse(
+                      resolvedApiName,
+                      { responseValue: item.value, editorType },
+                      { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
+                    );
+                    if (!applied.ok) {
+                      setDeleteErrorNotice({ open: true, message: `응답을 적용하지 못했습니다. (${applied.error})` });
+                      return;
+                    }
+                    setStoredActiveApiResponse(resolvedApiName, {
+                      apiName: resolvedApiName,
+                      responseValue: item.value,
+                      type: editorType,
+                      title: item.label,
+                      description: item.description,
+                      configuration: item.configuration,
+                    });
+                    markRegisteredApiJsonResponse(resolvedApiName);
+                    setResponseUiTick((t) => t + 1);
+                  } finally {
+                    responseApplyInFlightRef.current = false;
+                    setResponseApplyBusy(false);
+                  }
                 }}
                 onDeletePersistedResponse={async (item: ApiResponseItem) => {
                   const p = getProjectForApiName(resolvedApiName);
@@ -308,10 +328,17 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
                     setDeleteErrorNotice({ open: true, message: formatSaveApiResponseUserError(result.error) });
                     return;
                   }
-                  clearStoredActiveApiResponseIfMatches(resolvedApiName, item.value);
-                  void clearMockActiveApiResponseIfMatches(resolvedApiName, item.value, {
+                  const cleared = await clearMockActiveApiResponseIfMatches(resolvedApiName, item.value, {
                     alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [],
                   });
+                  if (!cleared.ok) {
+                    setDeleteErrorNotice({
+                      open: true,
+                      message: `응답은 삭제했지만 사용 설정을 정리하지 못했습니다. 다른 응답을 선택해 적용해 주세요. (${cleared.error})`,
+                    });
+                  } else {
+                    clearStoredActiveApiResponseIfMatches(resolvedApiName, item.value);
+                  }
                   clearRegisteredApiJsonFlagIfNoSavedResponses(resolvedApiName);
                   setResponseUiTick((t) => t + 1);
                 }}
