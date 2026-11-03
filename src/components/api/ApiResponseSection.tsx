@@ -20,7 +20,8 @@ export interface ApiResponseSectionProps {
   checkedValue: string;
   setCheckedValue: Dispatch<SetStateAction<string>>;
   activeResponse: ActiveApiResponseState;
-  onApplyActiveResponse: (item: ApiResponseItem) => void;
+  onApplyActiveResponse: (item: ApiResponseItem) => void | Promise<void>;
+  applyBusy?: boolean;
   /** 디스크에 저장된 응답만 삭제 (내장 템플릿 제외) */
   onDeletePersistedResponse?: (item: ApiResponseItem) => void | Promise<void>;
 }
@@ -72,6 +73,7 @@ export default function ApiResponseSection({
   setCheckedValue,
   activeResponse,
   onApplyActiveResponse,
+  applyBusy = false,
   onDeletePersistedResponse,
 }: ApiResponseSectionProps) {
   const { localResponses, testResponses, errorResponses } = getApiResponseGroups(apiName);
@@ -88,6 +90,7 @@ export default function ApiResponseSection({
         isActiveResponse={isActiveSelection}
         showApplyButton={Boolean(selectedItem && !isActiveSelection)}
         onApplyAsActive={selectedItem ? () => onApplyActiveResponse(selectedItem) : undefined}
+        applyBusy={applyBusy}
       />
 
       {/* Three columns */}

@@ -19,6 +19,7 @@ interface ApiResponseStatusProps {
   /** 선택 항목이 아직 활성 응답이 아닐 때 표시 */
   showApplyButton?: boolean;
   onApplyAsActive?: () => void;
+  applyBusy?: boolean;
 }
 
 export default function ApiResponseStatus({
@@ -29,6 +30,7 @@ export default function ApiResponseStatus({
   isActiveResponse = false,
   showApplyButton = false,
   onApplyAsActive,
+  applyBusy = false,
 }: ApiResponseStatusProps) {
   const statusIcon = !hasSelectedResponse ? (
     <NoActiveIcon />
@@ -51,8 +53,8 @@ export default function ApiResponseStatus({
           </div>
         </div>
         {showApplyButton && onApplyAsActive && (
-          <Btn category="primary" size="medium" width={132} className="shrink-0" onClick={onApplyAsActive}>
-            응답으로 사용
+          <Btn category="primary" size="medium" width={132} className="shrink-0" disabled={applyBusy} onClick={onApplyAsActive}>
+            {applyBusy ? "적용 중" : "응답으로 사용"}
           </Btn>
         )}
       </div>
