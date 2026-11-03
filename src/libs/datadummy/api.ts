@@ -11,6 +11,7 @@ export interface ApiResponseItem {
   description: string;
   configuration: string;
   queryParams?: Record<string, string>;
+  updatedAt?: string;
 }
 
 export interface ApiResponseGroups {
@@ -106,6 +107,7 @@ function savedRowToApiItem(row: SavedApiResponseRow): ApiResponseItem {
     description: row.description,
     configuration: row.configuration,
     queryParams: row.queryParams,
+    updatedAt: row.updatedAt,
     infoText: row.queryParams && Object.keys(row.queryParams).length
       ? `?${new URLSearchParams(row.queryParams).toString()}`
       : undefined,

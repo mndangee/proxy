@@ -33,7 +33,7 @@ export interface ProjectFsApi {
     | {
         ok: true;
         project: ProjectManifest;
-        summary?: { detectedFormat: "server-dump" | "grouped-json" | "plain-json"; apiCount: number; responseCount: number; skippedFileCount: number; defaultCount?: number; testCount?: number; errorCount?: number; metadataMappedApiCount?: number; metadataUnmappedApiCount?: number; metadataUnmappedTrans?: string[] };
+        summary?: { detectedFormat: "server-dump" | "grouped-json" | "plain-json"; apiCount: number; responseCount: number; skippedFileCount: number; defaultCount?: number; testCount?: number; errorCount?: number; metadataMappedApiCount?: number; metadataUnmappedApiCount?: number; metadataUnmappedTrans?: string[]; validationIssues?: string[]; fileResults?: Array<{ fileName: string; status: "imported" | "skipped" | "failed"; reason?: string }> };
       }
     | { ok: false; error: string }
   >;
@@ -53,9 +53,11 @@ export interface ProjectFsApi {
           metadataMappedApiCount?: number;
           metadataUnmappedApiCount?: number;
           metadataUnmappedTrans?: string[];
+          validationIssues?: string[];
+          fileResults?: Array<{ fileName: string; status: "imported" | "skipped" | "failed"; reason?: string }>;
         };
       }
-    | { ok: false; error: string }
+    | { ok: false; error: string; validationIssues?: string[] }
   >;
   executeImport: (sessionId: string) => ReturnType<ProjectFsApi["import"]>;
   cancelImport: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
@@ -77,12 +79,15 @@ export interface ProjectFsApi {
     sfdAbsolutePath: string | string[],
   ) => Promise<{ ok: true; updated: number; skipped: string[] } | { ok: false; error: string }>;
   pickInterfaceDefinition: (payload: { folderName: string; forcePick?: boolean }) => Promise<{ ok: true; paths: string[]; remembered: boolean } | { ok: false; error: string }>;
+  clearApiMetadataSources: (folderName: string) => Promise<
+    { ok: true; cleared: boolean } | { ok: false; error: string }
+  >;
   deleteApi: (folderName: string, apiId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   getResponsesStore: (folderName: string) => Promise<{ version: number; byApiName: Record<string, unknown[]> }>;
   upsertApiResponse: (
     folderName: string,
     apiName: string,
-    payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string> },
+    payload: { value: string | null; label: string; description: string; editorType: string; configuration: string; queryParams?: Record<string, string>; expectedUpdatedAt?: string },
   ) => Promise<{ ok: true; value: string } | { ok: false; error: string }>;
   deleteApiResponse: (folderName: string, apiName: string, responseValue: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   getAppProxyConfig: () => Promise<AppProxyConfig>;
@@ -125,6 +130,12 @@ export interface ProjectFsApi {
       mockProfile?: "legacy-tran-envelope" | "generic-json";
     },
   ) => Promise<{ ok: true; config: AppProxyConfig } | { ok: false; error: string }>;
+  resetProxySettings: () => Promise<
+    { ok: true; config: AppProxyConfig; restored: boolean } | { ok: false; error: string }
+  >;
+  resetAllUserData: () => Promise<
+    { ok: true; restored: boolean } | { ok: false; error: string }
+  >;
   setLinkedClients: (payload: { folderName: string; linkedClients: LinkedClientEntry[] }) => Promise<{ ok: true } | { ok: false; error: string }>;
   getMockProxyStatus: () => Promise<{
     listening: boolean;
@@ -163,9 +174,10 @@ export interface ProjectFsApi {
   clearRecentProxyRequests: () => Promise<{ ok: true }>;
   importApisJsonPick: (
     folderName: string,
+    options?: { sessionId?: string; conflictPolicy?: "overwrite" | "add" | "skip" },
   ) => Promise<
-    | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
-    | { ok: false; error: string; errors?: string[] }
+    | { ok: true; imported: number; updated: number; skipped: number; touchedApiNames: string[]; errors: string[]; fileResults: Array<{ fileName: string; status: "imported" | "skipped" | "failed"; reason?: string }> }
+    | { ok: false; error: string; errors?: string[]; sessionId?: string; conflictFiles?: string[] }
   >;
 }
 

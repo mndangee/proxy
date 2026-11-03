@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import type { Dirent } from "fs";
 import { promises as fs } from "fs";
 import { tmpdir } from "os";
@@ -291,6 +291,7 @@ function coerceLinkedClients(raw: unknown): LinkedClientEntry[] | undefined {
 
 export async function readManifest(projectRoot: string): Promise<ProjectManifest | null> {
   try {
+    await recoverInterruptedApiImport(projectRoot);
     const raw = await fs.readFile(join(projectRoot, "project.json"), "utf-8");
     const data = JSON.parse(raw) as unknown;
     return manifestFromJsonFilePayload(data);
@@ -828,6 +829,10 @@ export async function readApisIndex(projectRoot: string): Promise<StoredApiEntry
 async function writeApisIndex(projectRoot: string, items: StoredApiEntry[]): Promise<void> {
   const fp = join(projectRoot, "apis", "index.json");
   await fs.mkdir(join(projectRoot, "apis"), { recursive: true });
+  await fs.writeFile(fp, serializeApisIndex(items), "utf-8");
+}
+
+function serializeApisIndex(items: StoredApiEntry[]): string {
   const sanitized = items.map((row) => ({
     id: row.id,
     method: row.method,
@@ -837,7 +842,7 @@ async function writeApisIndex(projectRoot: string, items: StoredApiEntry[]): Pro
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
-  await fs.writeFile(fp, JSON.stringify(sanitized, null, 2), "utf-8");
+  return JSON.stringify(sanitized, null, 2);
 }
 
 const API_RESPONSES_STORE_VERSION = 1;
@@ -850,7 +855,7 @@ type ApiResponseRowDisk = {
   editorType: "default" | "test" | "error";
   configuration: string;
   queryParams?: Record<string, string>;
-  source?: { type: "server-dump"; id: string; fileName: string };
+  source?: { type: "server-dump" | "json-file"; id: string; fileName: string; contentHash?: string };
   createdAt: string;
   updatedAt: string;
 };
@@ -864,6 +869,11 @@ function coerceResponseQueryParams(raw: unknown): Record<string, string> | undef
     out[k] = value;
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+function responseQueryParamsSignature(params: Record<string, string> | undefined): string | null {
+  const entries = Object.entries(params ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return entries.length ? JSON.stringify(entries) : null;
 }
 
 type ApiResponsesStoreFile = {
@@ -898,6 +908,93 @@ async function writeApiResponsesStore(projectRoot: string, byApiName: Record<str
   await fs.writeFile(fp, JSON.stringify(body, null, 2), "utf-8");
 }
 
+const API_IMPORT_TRANSACTION_FILE = ".dataforge-api-import.json";
+const activeApiImportTransactions = new Set<string>();
+
+type ApiImportTransactionMarker = {
+  directory: string;
+  files: Array<{ relativePath: string; backupName: string; existed: boolean }>;
+};
+
+async function recoverInterruptedApiImport(projectRoot: string): Promise<void> {
+  if (activeApiImportTransactions.has(projectRoot)) return;
+  const markerPath = join(projectRoot, API_IMPORT_TRANSACTION_FILE);
+  let marker: ApiImportTransactionMarker;
+  try {
+    marker = JSON.parse(await fs.readFile(markerPath, "utf-8")) as ApiImportTransactionMarker;
+  } catch {
+    return;
+  }
+  if (!marker.directory || !Array.isArray(marker.files)) {
+    await fs.rm(markerPath, { force: true }).catch(() => {});
+    return;
+  }
+  const transactionDir = join(projectRoot, marker.directory);
+  for (const file of marker.files) {
+    const target = join(projectRoot, file.relativePath);
+    if (file.existed) {
+      await fs.mkdir(dirname(target), { recursive: true });
+      await fs.copyFile(join(transactionDir, file.backupName), target);
+    } else {
+      await fs.rm(target, { force: true }).catch(() => {});
+    }
+  }
+  await fs.rm(markerPath, { force: true }).catch(() => {});
+  await fs.rm(transactionDir, { recursive: true, force: true }).catch(() => {});
+}
+
+async function commitApiImportTransaction(
+  projectRoot: string,
+  items: StoredApiEntry[],
+  byApiName: Record<string, ApiResponseRowDisk[]>,
+  manifest: ProjectManifest,
+): Promise<void> {
+  await recoverInterruptedApiImport(projectRoot);
+  await fs.mkdir(join(projectRoot, "apis"), { recursive: true });
+  const directory = `.dataforge-api-import-${randomUUID()}`;
+  const transactionDir = join(projectRoot, directory);
+  await fs.mkdir(transactionDir, { recursive: true });
+  const payloads = [
+    { relativePath: join("apis", "index.json"), backupName: "index.backup.json", nextName: "index.next.json", content: serializeApisIndex(items) },
+    {
+      relativePath: join("apis", "responses-store.json"),
+      backupName: "responses.backup.json",
+      nextName: "responses.next.json",
+      content: JSON.stringify({ version: API_RESPONSES_STORE_VERSION, byApiName } satisfies ApiResponsesStoreFile, null, 2),
+    },
+    { relativePath: "project.json", backupName: "project.backup.json", nextName: "project.next.json", content: JSON.stringify(manifest, null, 2) },
+  ];
+  const marker: ApiImportTransactionMarker = { directory, files: [] };
+  activeApiImportTransactions.add(projectRoot);
+  try {
+    for (const payload of payloads) {
+      const target = join(projectRoot, payload.relativePath);
+      let existed = true;
+      try {
+        await fs.copyFile(target, join(transactionDir, payload.backupName));
+      } catch {
+        existed = false;
+      }
+      await fs.writeFile(join(transactionDir, payload.nextName), payload.content, "utf-8");
+      marker.files.push({ relativePath: payload.relativePath, backupName: payload.backupName, existed });
+    }
+    await fs.writeFile(join(projectRoot, API_IMPORT_TRANSACTION_FILE), JSON.stringify(marker, null, 2), "utf-8");
+    for (const payload of payloads) {
+      const target = join(projectRoot, payload.relativePath);
+      await fs.rm(target, { force: true });
+      await fs.rename(join(transactionDir, payload.nextName), target);
+    }
+    await fs.rm(join(projectRoot, API_IMPORT_TRANSACTION_FILE), { force: true });
+    await fs.rm(transactionDir, { recursive: true, force: true }).catch(() => {});
+    activeApiImportTransactions.delete(projectRoot);
+  } catch (error) {
+    activeApiImportTransactions.delete(projectRoot);
+    await recoverInterruptedApiImport(projectRoot);
+    await fs.rm(transactionDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 type LooseJsonImportErr = "duplicate-name" | "no-json-files";
 
 type ImportSummary = {
@@ -911,7 +1008,68 @@ type ImportSummary = {
   metadataMappedApiCount: number;
   metadataUnmappedApiCount: number;
   metadataUnmappedTrans: string[];
+  validationIssues?: string[];
+  fileResults?: ImportFileResult[];
 };
+
+type ImportFileResult = {
+  fileName: string;
+  status: "imported" | "skipped" | "failed";
+  reason?: string;
+};
+
+type ApiJsonConflictPolicy = "overwrite" | "add" | "skip";
+
+type PendingApiJsonImport = {
+  folderName: string;
+  filePaths: string[];
+  createdAt: number;
+};
+
+const pendingApiJsonImports = new Map<string, PendingApiJsonImport>();
+const activeApiJsonImportRequests = new Set<string>();
+
+function hashJsonConfiguration(configuration: string): string {
+  return createHash("sha256").update(configuration).digest("hex");
+}
+
+const MAX_IMPORT_JSON_BYTES = 10 * 1024 * 1024;
+
+type ValidatedJsonFile =
+  | { ok: true; raw: string; configuration: string }
+  | { ok: false; issue: string };
+
+async function validateImportJsonFile(filePath: string, fileLabel = basename(filePath)): Promise<ValidatedJsonFile> {
+  let stat;
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    return { ok: false, issue: `${fileLabel}: 파일을 읽지 못했습니다.` };
+  }
+  if (!stat.isFile()) return { ok: false, issue: `${fileLabel}: 파일이 아닙니다.` };
+  if (stat.size > MAX_IMPORT_JSON_BYTES) {
+    return { ok: false, issue: `${fileLabel}: 파일이 10MB를 초과하여 가져오지 않았습니다.` };
+  }
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, "utf-8");
+  } catch {
+    return { ok: false, issue: `${fileLabel}: 파일을 읽지 못했습니다.` };
+  }
+  if (!raw.trim()) return { ok: false, issue: `${fileLabel}: 내용이 비어 있습니다.` };
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === null || typeof parsed !== "object") {
+      return { ok: false, issue: `${fileLabel}: JSON 객체 또는 객체 배열 형식으로 저장해 주세요.` };
+    }
+    if (Array.isArray(parsed) && parsed.some((item) => item === null || typeof item !== "object" || Array.isArray(item))) {
+      return { ok: false, issue: `${fileLabel}: 최상위 배열에는 JSON 객체만 포함할 수 있습니다.` };
+    }
+    return { ok: true, raw, configuration: JSON.stringify(parsed, null, 2) };
+  } catch {
+    return { ok: false, issue: `${fileLabel}: JSON 형식이 올바르지 않습니다.` };
+  }
+}
 
 type ServerDumpFileMeta = { tran: string; sourceId: string; label: string };
 
@@ -932,7 +1090,7 @@ function parseServerDumpFileName(fileName: string): ServerDumpFileMeta | null {
 }
 
 function detectServerDumpFiles(fileNames: string[]): Map<string, ServerDumpFileMeta> | null {
-  if (fileNames.length < 2) return null;
+  if (fileNames.length === 0) return null;
   const parsed = new Map<string, ServerDumpFileMeta>();
   for (const fileName of fileNames) {
     const meta = parseServerDumpFileName(fileName);
@@ -1023,14 +1181,6 @@ async function collectNestedFolderJsonImports(sourceDir: string): Promise<{ fold
   }
   out.sort((a, b) => a.folderName.localeCompare(b.folderName));
   return out;
-}
-
-function jsonFileToConfiguration(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw) as unknown, null, 2);
-  } catch {
-    return raw.trim();
-  }
 }
 
 const MAX_INTERFACE_SCAN_FILES_PER_DIR = 120;
@@ -1268,10 +1418,27 @@ function uniqueResponseLabelForImport(list: ApiResponseRowDisk[], base: string):
 async function importApisFromJsonPaths(
   projectRoot: string,
   filePaths: string[],
-): Promise<{ imported: number; errors: string[]; touchedApiNames: string[] }> {
+  conflictPolicy: ApiJsonConflictPolicy = "skip",
+): Promise<{ imported: number; updated: number; skipped: number; errors: string[]; touchedApiNames: string[]; fileResults: ImportFileResult[] }> {
   const errors: string[] = [];
+  const fileResults: ImportFileResult[] = [];
   const touchedApiNames: string[] = [];
   let imported = 0;
+  let updated = 0;
+  let skipped = 0;
+  const manifest = await readManifest(projectRoot);
+  if (!manifest) {
+    return {
+      imported,
+      updated,
+      skipped,
+      errors: ["프로젝트 정보를 찾지 못했습니다."],
+      touchedApiNames,
+      fileResults: filePaths.map((filePath) => ({ fileName: basename(filePath), status: "failed", reason: "프로젝트 정보를 찾지 못했습니다." })),
+    };
+  }
+  const items = await readApisIndex(projectRoot);
+  const store = await readApiResponsesStore(projectRoot);
   const careLookupMemo = new Map<string, Map<string, SfdCareInterface>>();
 
   async function careLookupNearJsonFile(jsonPath: string): Promise<Map<string, SfdCareInterface>> {
@@ -1289,52 +1456,50 @@ async function importApisFromJsonPaths(
     const fileLabel = basename(fp);
     if (!fileLabel.toLowerCase().endsWith(".json")) {
       errors.push(`${fileLabel}: JSON 파일이 아닙니다.`);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: "JSON 파일이 아닙니다." });
       continue;
     }
     const stemFromFile = fileLabel.replace(/\.json$/i, "").trim();
     if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) {
       errors.push(`${fileLabel}: API 이름으로 사용할 수 없습니다.`);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: "API 이름으로 사용할 수 없습니다." });
       continue;
     }
     if (stemFromFile.toLowerCase() === "project") {
       errors.push(`${fileLabel}: 이 파일명은 사용할 수 없습니다.`);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: "이 파일명은 사용할 수 없습니다." });
       continue;
     }
 
-    let raw: string;
-    try {
-      raw = await fs.readFile(fp, "utf-8");
-    } catch {
-      errors.push(`${fileLabel}: 파일을 읽지 못했습니다.`);
+    const validated = await validateImportJsonFile(fp, fileLabel);
+    if (!validated.ok) {
+      errors.push(validated.issue);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: validated.issue.replace(/^.*?:\s*/, "") });
       continue;
     }
+    const { raw, configuration } = validated;
 
     const careLookup = await careLookupNearJsonFile(fp);
     const meta = inferImportedJsonApiMeta(raw, stemFromFile, `JSON 가져오기: ${fileLabel}`, careLookup);
     const apiKey = meta.apiKey;
     if (!apiKey || !isSafeProjectFolderName(apiKey)) {
       errors.push(`${fileLabel}: API 이름으로 사용할 수 없습니다.`);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: "API 이름으로 사용할 수 없습니다." });
       continue;
     }
     if (apiKey.toLowerCase() === "project") {
       errors.push(`${fileLabel}: 이 파일명은 사용할 수 없습니다.`);
+      fileResults.push({ fileName: fileLabel, status: "failed", reason: "이 파일명은 사용할 수 없습니다." });
       continue;
     }
 
-    const configuration = jsonFileToConfiguration(raw);
-
-    const items = await readApisIndex(projectRoot);
-    const manifest = await readManifest(projectRoot);
-    if (!manifest) {
-      errors.push(`${fileLabel}: 프로젝트 매니페스트가 없습니다.`);
-      break;
-    }
-
     const existing = items.find((x) => x.name.trim() === apiKey);
+    let createdApiEntry = false;
 
     if (!existing) {
       if (items.some((x) => x.method === "POST" && x.tran.trim() === meta.tran.trim())) {
         errors.push(`${fileLabel}: 같은 트랜(${meta.tran})의 API가 이미 있습니다.`);
+        fileResults.push({ fileName: fileLabel, status: "failed", reason: `같은 트랜(${meta.tran})의 API가 이미 있습니다.` });
         continue;
       }
       const now = new Date().toISOString();
@@ -1347,17 +1512,55 @@ async function importApisFromJsonPaths(
         createdAt: now,
         updatedAt: now,
       };
-      const nextItems = [...items, entry];
-      await writeApisIndex(projectRoot, nextItems);
-      await fs.writeFile(
-        join(projectRoot, "project.json"),
-        JSON.stringify({ ...manifest, updatedAt: now } satisfies ProjectManifest, null, 2),
-        "utf-8",
-      );
+      items.push(entry);
+      createdApiEntry = true;
     }
 
-    const store = await readApiResponsesStore(projectRoot);
     const list = [...(store.byApiName[apiKey] ?? [])];
+    const contentHash = hashJsonConfiguration(configuration);
+    const sourceMatches: Array<{ apiName: string; index: number; row: ApiResponseRowDisk }> = [];
+    for (const [storedApiName, rows] of Object.entries(store.byApiName)) {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        if (row.source?.type === "json-file" && row.source.fileName === fileLabel) {
+          sourceMatches.push({ apiName: storedApiName, index, row });
+        }
+      }
+    }
+    const exactMatch = sourceMatches.find(({ row }) =>
+      (row.source?.contentHash ?? hashJsonConfiguration(row.configuration)) === contentHash,
+    );
+    const sourceMatch = [...sourceMatches].sort((a, b) => b.row.updatedAt.localeCompare(a.row.updatedAt))[0];
+    if (sourceMatch) {
+      if (exactMatch) {
+        if (createdApiEntry) items.splice(items.findIndex((item) => item.name === apiKey), 1);
+        skipped += 1;
+        fileResults.push({ fileName: fileLabel, status: "skipped", reason: "기존 파일과 내용이 동일합니다." });
+        continue;
+      }
+      if (conflictPolicy === "skip") {
+        if (createdApiEntry) items.splice(items.findIndex((item) => item.name === apiKey), 1);
+        skipped += 1;
+        fileResults.push({ fileName: fileLabel, status: "skipped", reason: "같은 파일명의 기존 응답을 유지했습니다." });
+        continue;
+      }
+      if (conflictPolicy === "overwrite") {
+        if (createdApiEntry) items.splice(items.findIndex((item) => item.name === apiKey), 1);
+        const sourceRows = [...(store.byApiName[sourceMatch.apiName] ?? [])];
+        const now = new Date().toISOString();
+        sourceRows[sourceMatch.index] = {
+          ...sourceMatch.row,
+          configuration,
+          source: { type: "json-file", id: sourceMatch.row.source?.id ?? randomUUID(), fileName: fileLabel, contentHash },
+          updatedAt: now,
+        };
+        store.byApiName[sourceMatch.apiName] = sourceRows;
+        touchedApiNames.push(sourceMatch.apiName);
+        updated += 1;
+        fileResults.push({ fileName: fileLabel, status: "imported", reason: "내용이 변경되어 기존 응답을 업데이트했습니다." });
+        continue;
+      }
+    }
     const label = list.length === 0 ? "default" : uniqueResponseLabelForImport(list, apiKey);
     const now = new Date().toISOString();
     const outValue = `saved-${randomUUID()}`;
@@ -1368,20 +1571,52 @@ async function importApisFromJsonPaths(
       description: "",
       editorType: "default",
       configuration,
+      source: { type: "json-file", id: randomUUID(), fileName: fileLabel, contentHash },
       createdAt: now,
       updatedAt: now,
     });
     store.byApiName[apiKey] = list;
-    await writeApiResponsesStore(projectRoot, store.byApiName);
-    const m2 = await readManifest(projectRoot);
-    if (m2) {
-      await fs.writeFile(join(projectRoot, "project.json"), JSON.stringify({ ...m2, updatedAt: now }, null, 2), "utf-8");
-    }
     touchedApiNames.push(apiKey);
     imported++;
+    fileResults.push({
+      fileName: fileLabel,
+      status: "imported",
+      reason: sourceMatch ? "같은 파일명의 변경된 내용을 새 응답으로 추가했습니다." : "새 응답으로 가져왔습니다.",
+    });
   }
 
-  return { imported, errors, touchedApiNames };
+  if (imported > 0 || updated > 0) {
+    const now = new Date().toISOString();
+    await commitApiImportTransaction(projectRoot, items, store.byApiName, { ...manifest, updatedAt: now });
+  }
+
+  return { imported, updated, skipped, errors, touchedApiNames, fileResults };
+}
+
+async function findChangedApiJsonImports(projectRoot: string, filePaths: string[]): Promise<string[]> {
+  const store = await readApiResponsesStore(projectRoot);
+  const importedByFileName = new Map<string, ApiResponseRowDisk[]>();
+  for (const rows of Object.values(store.byApiName)) {
+    for (const row of rows) {
+      if (row.source?.type === "json-file") {
+        importedByFileName.set(row.source.fileName, [...(importedByFileName.get(row.source.fileName) ?? []), row]);
+      }
+    }
+  }
+  const changed: string[] = [];
+  for (const filePath of filePaths) {
+    const fileName = basename(filePath);
+    const existing = importedByFileName.get(fileName);
+    if (!existing?.length) continue;
+    const validated = await validateImportJsonFile(filePath, fileName);
+    if (!validated.ok) continue;
+    const nextHash = hashJsonConfiguration(validated.configuration);
+    const hasExactContent = existing.some((row) =>
+      (row.source?.contentHash ?? hashJsonConfiguration(row.configuration)) === nextHash,
+    );
+    if (!hasExactContent) changed.push(fileName);
+  }
+  return changed;
 }
 
 /**
@@ -1439,6 +1674,8 @@ async function importLooseJsonFolderAsProject(
   let importedResponseCount = 0;
   let metadataMappedApiCount = 0;
   const metadataUnmappedTrans: string[] = [];
+  const validationIssues: string[] = [];
+  const fileResults: ImportFileResult[] = [];
 
   for (const { folderName: subFolder, fileNames } of nestedPlan) {
     const folderStem = subFolder.trim();
@@ -1446,17 +1683,21 @@ async function importLooseJsonFolderAsProject(
 
     const responses: ApiResponseRowDisk[] = [];
     const sourcePaths: string[] = [];
+    const validFileLabels: string[] = [];
     let folderMeta: { apiKey: string; tran: string; description: string; metadataMatched: boolean } | null = null;
     const sortedNames = [...fileNames].sort((a, b) => a.localeCompare(b));
     for (const fileName of sortedNames) {
       const abs = join(sourceDir, subFolder, fileName);
-      let raw: string;
-      try {
-        raw = await fs.readFile(abs, "utf-8");
-      } catch {
+      const validated = await validateImportJsonFile(abs, `${subFolder}/${fileName}`);
+      if (!validated.ok) {
+        validationIssues.push(validated.issue);
+        fileResults.push({ fileName: `${subFolder}/${fileName}`, status: "failed", reason: validated.issue.replace(/^.*?:\s*/, "") });
+        skippedFileCount += 1;
         continue;
       }
+      const { raw, configuration } = validated;
       sourcePaths.push(abs);
+      validFileLabels.push(`${subFolder}/${fileName}`);
       if (folderMeta == null) {
         folderMeta = inferImportedJsonApiMeta(
           raw,
@@ -1465,7 +1706,6 @@ async function importLooseJsonFolderAsProject(
           globalCareLookup,
         );
       }
-      const configuration = jsonFileToConfiguration(raw);
       const val = `saved-${randomUUID()}`;
       const labelStem = fileName.replace(/\.json$/i, "").trim() || "default";
       const fileMs = await pathMtimeMs(abs);
@@ -1488,7 +1728,16 @@ async function importLooseJsonFolderAsProject(
       folderMeta ??
       inferImportedJsonApiMeta("", folderStem, `가져온 폴더 · 응답 ${responses.length}개`, globalCareLookup);
     const apiKey = meta.apiKey;
-    if (!apiKey || usedApiKeys.has(apiKey)) continue;
+    if (!apiKey) {
+      skippedFileCount += responses.length;
+      for (const fileName of validFileLabels) fileResults.push({ fileName, status: "skipped", reason: "API 이름을 확인할 수 없습니다." });
+      continue;
+    }
+    if (usedApiKeys.has(apiKey)) {
+      skippedFileCount += responses.length;
+      for (const fileName of validFileLabels) fileResults.push({ fileName, status: "skipped", reason: `같은 API(${apiKey})가 이미 포함되어 있습니다.` });
+      continue;
+    }
 
     usedApiKeys.add(apiKey);
     const apiUpdatedIso = await maxPathMtimeIso(sourcePaths, now);
@@ -1502,6 +1751,7 @@ async function importLooseJsonFolderAsProject(
       updatedAt: apiUpdatedIso,
     });
     byApiName[apiKey] = labelSingleDefaultResponse(responses, meta.description);
+    for (const fileName of validFileLabels) fileResults.push({ fileName, status: "imported" });
     if (meta.metadataMatched) metadataMappedApiCount += 1;
     else metadataUnmappedTrans.push(meta.tran);
   }
@@ -1512,18 +1762,20 @@ async function importLooseJsonFolderAsProject(
       const meta = serverDumpFiles.get(fileName);
       if (!meta) {
         skippedFileCount += 1;
+        const issue = `${fileName}: 파일명에서 트랜 ID와 sourceId를 찾지 못했습니다.`;
+        validationIssues.push(issue);
+        fileResults.push({ fileName, status: "skipped", reason: "파일명에서 트랜 ID와 sourceId를 찾지 못했습니다." });
         continue;
       }
       const absRoot = join(sourceDir, fileName);
-      let raw: string;
-      let configuration: string;
-      try {
-        raw = await fs.readFile(absRoot, "utf-8");
-        configuration = JSON.stringify(JSON.parse(raw) as unknown, null, 2);
-      } catch {
+      const validated = await validateImportJsonFile(absRoot, fileName);
+      if (!validated.ok) {
         skippedFileCount += 1;
+        validationIssues.push(validated.issue);
+        fileResults.push({ fileName, status: "failed", reason: validated.issue.replace(/^.*?:\s*/, "") });
         continue;
       }
+      const { configuration } = validated;
       const fileMs = await pathMtimeMs(absRoot);
       const fileMtimeIso = fileMs > 0 ? new Date(fileMs).toISOString() : now;
       const value = `saved-${randomUUID()}`;
@@ -1542,7 +1794,6 @@ async function importLooseJsonFolderAsProject(
       bucket.responses.push(response);
       bucket.paths.push(absRoot);
       grouped.set(meta.tran, bucket);
-      importedResponseCount += 1;
     }
 
     for (const [tran, group] of grouped) {
@@ -1554,6 +1805,9 @@ async function importLooseJsonFolderAsProject(
       const mappedDescription = care?.desc.trim() || `서버 더미 데이터 · 응답 ${responses.length}개`;
       if (usedApiKeys.has(mappedApiName)) {
         skippedFileCount += group.responses.length;
+        for (const response of group.responses) {
+          fileResults.push({ fileName: response.source?.fileName ?? tran, status: "skipped", reason: `같은 API(${mappedApiName})가 이미 포함되어 있습니다.` });
+        }
         continue;
       }
       items.push({
@@ -1566,6 +1820,8 @@ async function importLooseJsonFolderAsProject(
         updatedAt: apiUpdatedIso,
       });
       byApiName[mappedApiName] = labelSingleDefaultResponse(responses, mappedDescription);
+      importedResponseCount += responses.length;
+      for (const response of responses) fileResults.push({ fileName: response.source?.fileName ?? tran, status: "imported" });
       usedApiKeys.add(mappedApiName);
       if (care) metadataMappedApiCount += 1;
       else metadataUnmappedTrans.push(mappedTran);
@@ -1574,23 +1830,37 @@ async function importLooseJsonFolderAsProject(
 
   for (const fileName of serverDumpFiles ? [] : rootJsonNames) {
     const stemFromFile = fileName.replace(/\.json$/i, "").trim();
-    if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) continue;
-
-    const absRoot = join(sourceDir, fileName);
-    let raw: string;
-    try {
-      raw = await fs.readFile(absRoot, "utf-8");
-    } catch {
+    if (!stemFromFile || !isSafeProjectFolderName(stemFromFile)) {
+      skippedFileCount += 1;
+      fileResults.push({ fileName, status: "skipped", reason: "API 이름으로 사용할 수 없는 파일명입니다." });
       continue;
     }
 
+    const absRoot = join(sourceDir, fileName);
+    const validated = await validateImportJsonFile(absRoot, fileName);
+    if (!validated.ok) {
+      skippedFileCount += 1;
+      validationIssues.push(validated.issue);
+      fileResults.push({ fileName, status: "failed", reason: validated.issue.replace(/^.*?:\s*/, "") });
+      continue;
+    }
+    const { raw, configuration } = validated;
+
     const meta = inferImportedJsonApiMeta(raw, stemFromFile, `가져온 파일: ${fileName}`, globalCareLookup);
     const apiKey = meta.apiKey;
-    if (!apiKey || usedApiKeys.has(apiKey)) continue;
+    if (!apiKey) {
+      skippedFileCount += 1;
+      fileResults.push({ fileName, status: "skipped", reason: "API 이름을 확인할 수 없습니다." });
+      continue;
+    }
+    if (usedApiKeys.has(apiKey)) {
+      skippedFileCount += 1;
+      fileResults.push({ fileName, status: "skipped", reason: `같은 API(${apiKey})가 이미 포함되어 있습니다.` });
+      continue;
+    }
 
     const rootMs = await pathMtimeMs(absRoot);
     const rootMtimeIso = rootMs > 0 ? new Date(rootMs).toISOString() : now;
-    const configuration = jsonFileToConfiguration(raw);
     const entry: StoredApiEntry = {
       id: randomUUID(),
       method: "POST",
@@ -1619,6 +1889,7 @@ async function importLooseJsonFolderAsProject(
     if (meta.metadataMatched) metadataMappedApiCount += 1;
     else metadataUnmappedTrans.push(meta.tran);
     importedResponseCount += 1;
+    fileResults.push({ fileName, status: "imported" });
   }
 
   if (items.length === 0) {
@@ -1672,6 +1943,8 @@ async function importLooseJsonFolderAsProject(
       metadataMappedApiCount,
       metadataUnmappedApiCount: Math.max(0, items.length - metadataMappedApiCount),
       metadataUnmappedTrans: [...new Set(metadataUnmappedTrans)].sort((a, b) => a.localeCompare(b)),
+      validationIssues,
+      fileResults,
     },
   };
 }
@@ -1689,6 +1962,7 @@ export type ImportAnalysis = {
   metadataMappedApiCount?: number;
   metadataUnmappedApiCount?: number;
   metadataUnmappedTrans?: string[];
+  validationIssues?: string[];
 };
 
 type ImportPlan = {
@@ -1778,7 +2052,7 @@ function countResponseTypes(rows: ApiResponseRowDisk[]): { defaultCount: number;
 async function analyzeImportDirectory(
   sourceDir: string,
   projectNameOverride?: string,
-): Promise<Omit<ImportAnalysis, "sessionId"> | { error: string }> {
+): Promise<Omit<ImportAnalysis, "sessionId"> | { error: string; validationIssues?: string[] }> {
   const manifestDir = await findProjectDirWithManifest(sourceDir);
   if (manifestDir) {
     const manifest = await readManifest(manifestDir);
@@ -1813,16 +2087,18 @@ async function analyzeImportDirectory(
   if (serverDumpFiles) {
     const grouped = new Map<string, ApiResponseRowDisk[]>();
     let skippedFileCount = 0;
+    const validationIssues: string[] = [];
     for (const fileName of rootJsonNames) {
       const meta = serverDumpFiles.get(fileName);
       if (!meta) {
         skippedFileCount += 1;
+        validationIssues.push(`${fileName}: 파일명에서 트랜 ID와 sourceId를 찾지 못했습니다.`);
         continue;
       }
-      try {
-        JSON.parse(await fs.readFile(join(sourceDir, fileName), "utf-8"));
-      } catch {
+      const validated = await validateImportJsonFile(join(sourceDir, fileName), fileName);
+      if (!validated.ok) {
         skippedFileCount += 1;
+        validationIssues.push(validated.issue);
         continue;
       }
       const value = `analysis-${meta.sourceId}-${fileName}`;
@@ -1841,7 +2117,7 @@ async function analyzeImportDirectory(
       grouped.set(meta.tran, rows);
     }
     const responses = [...grouped.values()].flatMap(assignServerDumpResponseTypes);
-    if (responses.length === 0) return { error: "no-json-files" };
+    if (responses.length === 0) return { error: "no-json-files", validationIssues };
     return {
       detectedFormat: "server-dump",
       projectName,
@@ -1849,25 +2125,46 @@ async function analyzeImportDirectory(
       responseCount: responses.length,
       ...countResponseTypes(responses),
       skippedFileCount,
+      validationIssues,
     };
   }
 
-  const nestedResponseCount = nestedPlan.reduce((sum, item) => sum + item.fileNames.length, 0);
-  const responseCount = nestedResponseCount + rootJsonNames.length;
-  if (responseCount === 0) return { error: "no-json-files" };
+  const validationIssues: string[] = [];
+  let nestedResponseCount = 0;
+  let nestedApiCount = 0;
+  for (const item of nestedPlan) {
+    let validInFolder = 0;
+    for (const fileName of item.fileNames) {
+      const validated = await validateImportJsonFile(join(sourceDir, item.folderName, fileName), `${item.folderName}/${fileName}`);
+      if (validated.ok) validInFolder += 1;
+      else validationIssues.push(validated.issue);
+    }
+    if (validInFolder > 0) nestedApiCount += 1;
+    nestedResponseCount += validInFolder;
+  }
+  let validRootCount = 0;
+  for (const fileName of rootJsonNames) {
+    const validated = await validateImportJsonFile(join(sourceDir, fileName), fileName);
+    if (validated.ok) validRootCount += 1;
+    else validationIssues.push(validated.issue);
+  }
+  const responseCount = nestedResponseCount + validRootCount;
+  if (responseCount === 0) return { error: "no-json-files", validationIssues };
+  const apiCount = nestedApiCount + validRootCount;
   return {
     detectedFormat: nestedPlan.length > 0 ? "grouped-json" : "plain-json",
     projectName,
-    apiCount: nestedPlan.length > 0 ? nestedPlan.length + rootJsonNames.length : rootJsonNames.length,
+    apiCount,
     responseCount,
-    defaultCount: nestedPlan.length > 0 ? nestedPlan.length + rootJsonNames.length : rootJsonNames.length,
-    testCount: Math.max(0, responseCount - (nestedPlan.length + rootJsonNames.length)),
+    defaultCount: apiCount,
+    testCount: Math.max(0, responseCount - apiCount),
     errorCount: 0,
-    skippedFileCount: 0,
+    skippedFileCount: validationIssues.length,
+    validationIssues,
   };
 }
 
-async function prepareImportPlan(picked: string, interfaceSearchRoots: string[]): Promise<ImportPlan | { error: string }> {
+async function prepareImportPlan(picked: string, interfaceSearchRoots: string[]): Promise<ImportPlan | { error: string; validationIssues?: string[] }> {
   const snapshotRoot = join(tmpdir(), `df-import-plan-${randomUUID()}`);
   try {
     await fs.mkdir(snapshotRoot, { recursive: true });
@@ -1883,6 +2180,7 @@ async function prepareImportPlan(picked: string, interfaceSearchRoots: string[])
       if (stat.isDirectory()) {
         sourcePath = join(snapshotRoot, "source");
         await fs.cp(picked, sourcePath, { recursive: true });
+        projectNameOverride = basename(picked).trim() || undefined;
       } else if (stat.isFile() && picked.toLowerCase().endsWith(".json")) {
         if (basename(picked).toLowerCase() === "project.json") {
           sourcePath = join(snapshotRoot, "source");
@@ -1891,7 +2189,7 @@ async function prepareImportPlan(picked: string, interfaceSearchRoots: string[])
           sourcePath = join(snapshotRoot, "source");
           await fs.mkdir(sourcePath, { recursive: true });
           await fs.copyFile(picked, join(sourcePath, basename(picked)));
-          projectNameOverride = basename(picked).replace(/\.json$/i, "").trim() || undefined;
+          projectNameOverride = basename(dirname(picked)).trim() || undefined;
         }
       } else {
         await fs.rm(snapshotRoot, { recursive: true, force: true });
@@ -1960,12 +2258,15 @@ export function registerProjectFsIpc(): void {
   ipcMain.removeHandler("project-fs:updateApi");
   ipcMain.removeHandler("project-fs:syncApisFromSfdModule");
   ipcMain.removeHandler("project-fs:pickInterfaceDefinition");
+  ipcMain.removeHandler("project-fs:clearApiMetadataSources");
   ipcMain.removeHandler("project-fs:deleteApi");
   ipcMain.removeHandler("project-fs:getResponsesStore");
   ipcMain.removeHandler("project-fs:upsertApiResponse");
   ipcMain.removeHandler("project-fs:deleteApiResponse");
   ipcMain.removeHandler("project-fs:getAppProxyConfig");
   ipcMain.removeHandler("project-fs:setAppProxyConfig");
+  ipcMain.removeHandler("project-fs:resetProxySettings");
+  ipcMain.removeHandler("project-fs:resetAllUserData");
   ipcMain.removeHandler("project-fs:pickServerDirectory");
   ipcMain.removeHandler("project-fs:detectServerCommand");
   ipcMain.removeHandler("project-fs:prepareProxyTakeover");
@@ -2020,6 +2321,23 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, paths: valid, remembered: false as const };
   });
 
+  ipcMain.handle("project-fs:clearApiMetadataSources", async (_event, folderNameRaw: unknown) => {
+    const folderName = typeof folderNameRaw === "string" ? folderNameRaw.trim() : "";
+    if (!folderName || !isSafeProjectFolderName(folderName)) return { ok: false as const, error: "invalid-folder" };
+    const projectRoot = join(getProjectsRoot(), folderName);
+    const manifest = await readManifest(projectRoot);
+    if (!manifest) return { ok: false as const, error: "not-found" };
+
+    const { apiMetadataSources, ...manifestWithoutSources } = manifest;
+    if (!apiMetadataSources?.length) return { ok: true as const, cleared: false as const };
+    await fs.writeFile(
+      join(projectRoot, "project.json"),
+      JSON.stringify({ ...manifestWithoutSources, updatedAt: new Date().toISOString() } satisfies ProjectManifest, null, 2),
+      "utf-8",
+    );
+    return { ok: true as const, cleared: true as const };
+  });
+
   ipcMain.handle("project-fs:detectServerCommand", async (_e, rawWorkdir: unknown) => {
     const workdir = typeof rawWorkdir === "string" ? rawWorkdir.trim() : "";
     if (!workdir) return { ok: false as const, error: "invalid-directory" };
@@ -2068,6 +2386,86 @@ export function registerProjectFsIpc(): void {
       return { ok: true as const, config: next };
     } catch {
       return { ok: false as const, error: "save-failed" };
+    }
+  });
+
+  ipcMain.handle("project-fs:resetProxySettings", async (): Promise<
+    | { ok: true; config: AppProxyConfig; restored: boolean }
+    | { ok: false; error: string }
+  > => {
+    try {
+      // 실행 중인 프록시와 DataForge가 시작한 프로젝트 서버부터 안전하게 중지한다.
+      await mergeAppProxyConfigDisk({
+        proxyServer: { enabled: false },
+        interceptGateway: { enabled: false, autoStartUpstream: false },
+      });
+      const { applyMockProxyFromConfig } = await import("./mock-proxy-server");
+      await applyMockProxyFromConfig();
+
+      // 포트 전환 전에 실행 중이던 프로젝트 서버가 있으면 원래 포트로 복구한다.
+      const { restoreActiveProxyTakeover } = await import("./proxy-port-takeover");
+      const restoreResult = await restoreActiveProxyTakeover();
+      if (!restoreResult.ok) return { ok: false as const, error: `restore-failed: ${restoreResult.error}` };
+
+      // 프로젝트·응답 관련 설정은 보존하고 연결 설정만 최초값으로 되돌린다.
+      const config = await mergeAppProxyConfigDisk({
+        proxyServer: {
+          enabled: false,
+          port: DEFAULT_PROXY_SERVER_PORT,
+          careDummyMobilityPath: null,
+          upstreamAutoStart: false,
+          upstreamServerWorkdir: null,
+          upstreamServerPort: DEFAULT_CARE_DUMMY_SERVER_PORT,
+          upstreamServerCommand: null,
+          upstreamNodePath: null,
+          careDummyAutoStart: false,
+          careDummyServerWorkdir: null,
+          careDummyServerPort: DEFAULT_CARE_DUMMY_SERVER_PORT,
+        },
+        interceptGateway: defaultInterceptGateway(),
+      });
+      return { ok: true as const, config, restored: restoreResult.restored };
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : "reset-failed" };
+    }
+  });
+
+  ipcMain.handle("project-fs:resetAllUserData", async (): Promise<
+    | { ok: true; restored: boolean }
+    | { ok: false; error: string }
+  > => {
+    try {
+      // 데이터 삭제 전에 프록시 프로세스를 중지하고 기존 프로젝트 서버부터 복구한다.
+      await mergeAppProxyConfigDisk({
+        proxyServer: { enabled: false },
+        interceptGateway: { enabled: false, autoStartUpstream: false },
+      });
+      const { applyMockProxyFromConfig } = await import("./mock-proxy-server");
+      await applyMockProxyFromConfig();
+      const { restoreActiveProxyTakeover } = await import("./proxy-port-takeover");
+      const restored = await restoreActiveProxyTakeover();
+      if (!restored.ok) return { ok: false as const, error: `restore-failed: ${restored.error}` };
+
+      const { clearRecentProxyRequests } = await import("./intercept-gateway");
+      await clearRecentProxyRequests();
+
+      for (const session of pendingImportSessions.values()) {
+        await fs.rm(session.plan.snapshotRoot, { recursive: true, force: true }).catch(() => {});
+      }
+      pendingImportSessions.clear();
+
+      const projectsRoot = getProjectsRoot();
+      await fs.rm(projectsRoot, { recursive: true, force: true });
+      await fs.mkdir(projectsRoot, { recursive: true });
+      await Promise.all([
+        fs.rm(getAppProxyConfigPath(), { force: true }),
+        fs.rm(join(app.getPath("userData"), "recent-proxy-requests.json"), { force: true }),
+        fs.rm(join(app.getPath("userData"), "import-interface-source.json"), { force: true }),
+      ]);
+      await fs.writeFile(getAppProxyConfigPath(), JSON.stringify(defaultAppProxyConfig(), null, 2), "utf-8");
+      return { ok: true as const, restored: restored.restored };
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : "reset-all-failed" };
     }
   });
 
@@ -2216,7 +2614,11 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, path: outPath };
   });
 
-  const importPickedSource = async (picked: string, interfaceSearchRoots: string[] = []) => {
+  const importPickedSource = async (
+    picked: string,
+    interfaceSearchRoots: string[] = [],
+    projectDisplayNameOverride?: string,
+  ) => {
     await ensureProjectsRoot();
     let srcDir = picked;
     let cleanupTmp: string | null = null;
@@ -2296,7 +2698,7 @@ export function registerProjectFsIpc(): void {
         const st = await fs.stat(srcDir);
         if (st.isDirectory()) {
           const loose = await importLooseJsonFolderAsProject(srcDir, {
-            projectDisplayName: basename(srcDir).trim() || undefined,
+            projectDisplayName: projectDisplayNameOverride?.trim() || basename(srcDir).trim() || undefined,
             interfaceSearchRoots,
           });
           if (loose.ok) {
@@ -2348,7 +2750,7 @@ export function registerProjectFsIpc(): void {
     if (!picked) return { ok: false as const, error: "cancelled" };
     const interfaceSearchRoots = await resolveImportInterfaceSearchRoots(picked);
     const plan = await prepareImportPlan(picked, interfaceSearchRoots);
-    if ("error" in plan) return { ok: false as const, error: plan.error };
+    if ("error" in plan) return { ok: false as const, error: plan.error, validationIssues: plan.validationIssues };
     const sessionId = randomUUID();
     pendingImportSessions.set(sessionId, { plan, createdAt: Date.now() });
     return { ok: true as const, analysis: { sessionId, ...plan.analysis } satisfies ImportAnalysis };
@@ -2361,7 +2763,11 @@ export function registerProjectFsIpc(): void {
     if (!session) return { ok: false as const, error: "import-session-not-found" };
     pendingImportSessions.delete(id);
     try {
-      const result = await importPickedSource(session.plan.sourcePath, session.plan.interfaceSearchRoots);
+      const result = await importPickedSource(
+        session.plan.sourcePath,
+        session.plan.interfaceSearchRoots,
+        session.plan.analysis.projectName,
+      );
       if (result.ok && !("summary" in result)) return { ...result, summary: session.plan.analysis };
       return result;
     } finally {
@@ -2702,6 +3108,7 @@ export function registerProjectFsIpc(): void {
     const configuration = String(pl.configuration ?? "");
     const queryParams = coerceResponseQueryParams(pl.queryParams);
     const existingValue = pl.value != null && String(pl.value).trim() ? String(pl.value).trim() : null;
+    const expectedUpdatedAt = typeof pl.expectedUpdatedAt === "string" ? pl.expectedUpdatedAt.trim() : "";
 
     const root = getProjectsRoot();
     const projectRoot = join(root, fname);
@@ -2710,6 +3117,17 @@ export function registerProjectFsIpc(): void {
 
     const store = await readApiResponsesStore(projectRoot);
     const list = [...(store.byApiName[api] ?? [])];
+    if (existingValue && expectedUpdatedAt) {
+      const current = list.find((row) => row.value === existingValue);
+      if (!current || current.updatedAt !== expectedUpdatedAt) return { ok: false as const, error: "response-conflict" };
+    }
+    const querySignature = responseQueryParamsSignature(queryParams);
+    const duplicateQueryRow = querySignature
+      ? list.find((row) => row.value !== existingValue && responseQueryParamsSignature(row.queryParams) === querySignature)
+      : undefined;
+    if (duplicateQueryRow) {
+      return { ok: false as const, error: `duplicate-query-condition:${duplicateQueryRow.label || "이름 없는 응답"}` };
+    }
     const now = new Date().toISOString();
     let outValue: string;
 
@@ -2804,9 +3222,10 @@ export function registerProjectFsIpc(): void {
     async (
       _e,
       folderName: unknown,
+      options?: { sessionId?: unknown; conflictPolicy?: unknown },
     ): Promise<
-      | { ok: true; imported: number; touchedApiNames: string[]; errors: string[] }
-      | { ok: false; error: string; errors?: string[] }
+      | { ok: true; imported: number; updated: number; skipped: number; touchedApiNames: string[]; errors: string[]; fileResults: ImportFileResult[] }
+      | { ok: false; error: string; errors?: string[]; sessionId?: string; conflictFiles?: string[] }
     > => {
       const fname = typeof folderName === "string" ? folderName.trim() : "";
       if (!fname || !isSafeProjectFolderName(fname)) return { ok: false as const, error: "invalid-folder" };
@@ -2814,23 +3233,58 @@ export function registerProjectFsIpc(): void {
       const root = getProjectsRoot();
       const projectRoot = join(root, fname);
       if (!(await readManifest(projectRoot))) return { ok: false as const, error: "not-found" };
+      if (activeApiJsonImportRequests.has(projectRoot)) return { ok: false as const, error: "import-in-progress" };
+      activeApiJsonImportRequests.add(projectRoot);
 
-      const { canceled, filePaths } = await dialog.showOpenDialog({
-        title: "API JSON 가져오기 (파일명이 API 이름이 됩니다)",
-        buttonLabel: "가져오기",
-        properties: ["openFile", "multiSelections"],
-        filters: [
-          { name: "JSON", extensions: ["json"] },
-          { name: "모든 파일", extensions: ["*"] },
-        ],
-      });
-      if (canceled || !filePaths?.length) return { ok: false as const, error: "cancelled" };
+      try {
+        let filePaths: string[];
+        const requestedSessionId = typeof options?.sessionId === "string" ? options.sessionId : "";
+        const conflictPolicy = options?.conflictPolicy;
+        if (requestedSessionId) {
+        const pending = pendingApiJsonImports.get(requestedSessionId);
+        pendingApiJsonImports.delete(requestedSessionId);
+        if (!pending || pending.folderName !== fname) return { ok: false as const, error: "import-session-expired" };
+        if (conflictPolicy !== "overwrite" && conflictPolicy !== "add" && conflictPolicy !== "skip") {
+          return { ok: false as const, error: "invalid-conflict-policy" };
+        }
+        filePaths = pending.filePaths;
+        } else {
+        const picked = await dialog.showOpenDialog({
+          title: "API JSON 가져오기 (파일명이 API 이름이 됩니다)",
+          buttonLabel: "가져오기",
+          properties: ["openFile", "multiSelections"],
+          filters: [
+            { name: "JSON", extensions: ["json"] },
+            { name: "모든 파일", extensions: ["*"] },
+          ],
+        });
+        if (picked.canceled || !picked.filePaths?.length) return { ok: false as const, error: "cancelled" };
+        filePaths = picked.filePaths;
+        const conflictFiles = await findChangedApiJsonImports(projectRoot, filePaths);
+        if (conflictFiles.length > 0) {
+          const expiresBefore = Date.now() - 10 * 60 * 1000;
+          for (const [id, session] of pendingApiJsonImports) {
+            if (session.createdAt < expiresBefore) pendingApiJsonImports.delete(id);
+          }
+          const sessionId = randomUUID();
+          pendingApiJsonImports.set(sessionId, { folderName: fname, filePaths, createdAt: Date.now() });
+          return { ok: false as const, error: "changed-file-conflict", sessionId, conflictFiles };
+        }
+        }
 
-      const { imported, errors, touchedApiNames } = await importApisFromJsonPaths(projectRoot, filePaths);
-      if (imported === 0) {
-        return { ok: false as const, error: "no-valid-json", errors };
+        let result: Awaited<ReturnType<typeof importApisFromJsonPaths>>;
+        try {
+          result = await importApisFromJsonPaths(projectRoot, filePaths, (conflictPolicy || "skip") as ApiJsonConflictPolicy);
+        } catch {
+          return { ok: false as const, error: "import-write-failed" };
+        }
+        if (result.imported === 0 && result.updated === 0 && result.skipped === 0) {
+          return { ok: false as const, error: "no-valid-json", errors: result.errors };
+        }
+        return { ok: true as const, ...result };
+      } finally {
+        activeApiJsonImportRequests.delete(projectRoot);
       }
-      return { ok: true as const, imported, touchedApiNames, errors };
     },
   );
 

@@ -2,6 +2,7 @@
  * Electron 앱이 쓰는 사용자 데이터를 초기화합니다.
  * - DataForge-projects/ 안의 모든 프로젝트 폴더 삭제
  * - proxy-app-config.json 삭제(다음 실행 시 기본값으로 재생성)
+ * - 최근 API 요청 기록과 임시 API 정보 연결 파일 삭제
  *
  * 브라우저만 쓸 때의 localStorage는 이 스크립트로 지울 수 없습니다.
  * 개발자 도구 → Application → Local Storage에서 아래 키를 수동 삭제하세요.
@@ -22,6 +23,8 @@ function electronUserDataDir() {
 const root = electronUserDataDir();
 const projectsDir = join(root, "DataForge-projects");
 const configFile = join(root, "proxy-app-config.json");
+const recentRequestsFile = join(root, "recent-proxy-requests.json");
+const interfaceSourceFile = join(root, "import-interface-source.json");
 
 console.log(`사용자 데이터 루트: ${root}`);
 
@@ -36,11 +39,13 @@ if (existsSync(projectsDir)) {
 mkdirSync(projectsDir, { recursive: true });
 console.log(`비움 후 생성: ${projectsDir}`);
 
-if (existsSync(configFile)) {
-  unlinkSync(configFile);
-  console.log(`삭제: ${configFile}`);
-} else {
-  console.log(`(없음) ${configFile}`);
+for (const file of [configFile, recentRequestsFile, interfaceSourceFile]) {
+  if (existsSync(file)) {
+    unlinkSync(file);
+    console.log(`삭제: ${file}`);
+  } else {
+    console.log(`(없음) ${file}`);
+  }
 }
 
 console.log(`
@@ -51,7 +56,8 @@ console.log(`
   - proxy-app-config-v1
   - proxy-app-api-latency-ms-v1
   - proxy-project-linked-clients-v1
+  - dataforge-recent-requests-seen-at
   - active-api-response:* (접두사로 검색 후 삭제)
-  - registered-json-response:* (있을 경우)
+  - proxy-api-json-registered:* (접두사로 검색 후 삭제)
 완료. Electron 앱을 다시 켠 뒤 홈이 비어 있는지 확인하세요.
 `);
