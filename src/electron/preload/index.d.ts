@@ -37,7 +37,7 @@ export interface ProjectFsApi {
       }
     | { ok: false; error: string }
   >;
-  analyzeImport: () => Promise<
+  analyzeImport: (sourceKind: "file" | "folder") => Promise<
     | {
         ok: true;
         analysis: {

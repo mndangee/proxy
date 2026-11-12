@@ -96,13 +96,13 @@ export default function HomePage() {
     else showImportModal(`가져오기에 실패했습니다. (${error ?? "알 수 없는 오류"})`);
   }, [showImportModal]);
 
-  const importProject = useCallback(() => {
+  const importProject = useCallback((sourceKind: "file" | "folder") => {
     if (importBusyRef.current) return;
     importBusyRef.current = true;
     setImportBusy(true);
     void (async () => {
       try {
-      const analyzed = await analyzeSharedProjectImport();
+      const analyzed = await analyzeSharedProjectImport(sourceKind);
       if (!analyzed.ok) {
         if (analyzed.error === "cancelled") return;
         showImportError(analyzed.error, analyzed.validationIssues);
@@ -130,19 +130,15 @@ export default function HomePage() {
     })();
   }, [refreshProjects, showImportError]);
 
-  const handleImportIntroContinue = useCallback((skipNextTime: boolean) => {
+  const handleImportIntroContinue = useCallback((sourceKind: "file" | "folder", skipNextTime: boolean) => {
     if (skipNextTime) window.localStorage.setItem(IMPORT_GUIDE_HIDDEN_KEY, "true");
     setImportIntroOpen(false);
-    importProject();
+    importProject(sourceKind);
   }, [importProject]);
 
   const requestProjectImport = useCallback(() => {
-    if (window.localStorage.getItem(IMPORT_GUIDE_HIDDEN_KEY) === "true") {
-      importProject();
-      return;
-    }
     setImportIntroOpen(true);
-  }, [importProject]);
+  }, []);
 
   useEffect(() => {
     void hydrateProjects();
@@ -181,7 +177,12 @@ export default function HomePage() {
         }}
       />
       <NoticeModal isOpen={importModal.open} onClose={closeImportModal} message={importModal.message} />
-      <ImportProjectIntroModal isOpen={importIntroOpen} onClose={() => setImportIntroOpen(false)} onContinue={handleImportIntroContinue} />
+      <ImportProjectIntroModal
+        isOpen={importIntroOpen}
+        compact={typeof window !== "undefined" && window.localStorage.getItem(IMPORT_GUIDE_HIDDEN_KEY) === "true"}
+        onClose={() => setImportIntroOpen(false)}
+        onContinue={handleImportIntroContinue}
+      />
       <Modal isOpen={proxySettingsOpen} onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} size="large" panelClassName="max-w-[700px] !overflow-hidden" anchorMain>
         <div className="max-h-[84vh] overflow-y-auto">
           <ProxyServerSettingsCard onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} onBusyChange={setProxySettingsBusy} />
@@ -200,6 +201,16 @@ export default function HomePage() {
               <div className="mb-4 flex items-end justify-between gap-3 border-b border-gray-200">
                 <div>{showProjectTabs ? <ProjectTab activeTab={projectTab} onTabChange={setProjectTab} /> : null}</div>
                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
+                  {proxyConnectionState !== "disconnected" ? (
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      className={`typo-caption-1 flex items-center gap-2 font-semibold ${proxyConnectionState === "connected" ? "text-emerald-700" : "text-red-700"}`}
+                    >
+                      <span className={`h-2 w-2 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : "bg-red-500"}`} />
+                      {proxyConnectionState === "connected" ? "더미 응답 사용 중" : "연결 확인 필요"}
+                    </span>
+                  ) : null}
                   <Btn
                     category="secondary"
                     variant
@@ -214,17 +225,10 @@ export default function HomePage() {
                     variant
                     size="medium"
                     width={160}
-                    className="relative !justify-center"
-                    startIcon={(
-                      <span
-                        role="status"
-                        aria-label={proxyConnectionState === "connected" ? "연결됨" : proxyConnectionState === "attention" ? "연결 확인 필요" : "연결 안 됨"}
-                        className={`absolute left-5 h-2 w-2 shrink-0 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : proxyConnectionState === "attention" ? "bg-red-500" : "bg-gray-400"}`}
-                      />
-                    )}
+                    className="!justify-center"
                     onClick={() => setProxySettingsOpen(true)}
                   >
-                    {proxyConnectionState === "connected" ? "연결 설정" : proxyConnectionState === "attention" ? "연결 확인" : "더미 응답 연결"}
+                    {proxyConnectionState === "attention" ? "연결 확인" : proxyConnectionState === "connected" ? "연결 설정" : "더미 응답 연결"}
                   </Btn>
                 </div>
               </div>

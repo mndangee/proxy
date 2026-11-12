@@ -244,22 +244,11 @@ async function findProjectDirWithManifest(root: string): Promise<string | null> 
   return null;
 }
 
-async function pickImportSourcePath(): Promise<string | null> {
-  const darwin = process.platform === "darwin";
-  if (!darwin) {
-    const choice = await dialog.showMessageBox({
-      type: "question",
-      title: "더미 데이터 가져오기",
-      message: "가져올 데이터 형태를 선택해 주세요.",
-      detail: "JSON 파일이나 ZIP은 파일 선택을, JSON이 들어 있는 폴더는 폴더 선택을 이용해 주세요.",
-      buttons: ["폴더 선택", "파일 선택", "취소"],
-      defaultId: 0,
-      cancelId: 2,
-      noLink: true,
-    });
-    if (choice.response === 2) return null;
+type ImportSourceKind = "file" | "folder";
 
-    const pickingDirectory = choice.response === 0;
+async function pickImportSourcePath(sourceKind?: ImportSourceKind): Promise<string | null> {
+  if (sourceKind) {
+    const pickingDirectory = sourceKind === "folder";
     const selected = await dialog.showOpenDialog({
       title: pickingDirectory ? "가져올 더미 데이터 폴더 선택" : "가져올 JSON 또는 ZIP 파일 선택",
       buttonLabel: "선택",
@@ -2766,9 +2755,9 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, project: imported };
   };
 
-  ipcMain.handle("project-fs:analyzeImport", async () => {
+  ipcMain.handle("project-fs:analyzeImport", async (_e, sourceKind: unknown) => {
     clearExpiredImportSessions();
-    const picked = await pickImportSourcePath();
+    const picked = await pickImportSourcePath(sourceKind === "file" || sourceKind === "folder" ? sourceKind : undefined);
     if (!picked) return { ok: false as const, error: "cancelled" };
     const interfaceSearchRoots = await resolveImportInterfaceSearchRoots(picked);
     const plan = await prepareImportPlan(picked, interfaceSearchRoots);
