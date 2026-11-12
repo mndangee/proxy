@@ -246,23 +246,45 @@ async function findProjectDirWithManifest(root: string): Promise<string | null> 
 
 async function pickImportSourcePath(): Promise<string | null> {
   const darwin = process.platform === "darwin";
+  if (!darwin) {
+    const choice = await dialog.showMessageBox({
+      type: "question",
+      title: "더미 데이터 가져오기",
+      message: "가져올 데이터 형태를 선택해 주세요.",
+      detail: "JSON 파일이나 ZIP은 파일 선택을, JSON이 들어 있는 폴더는 폴더 선택을 이용해 주세요.",
+      buttons: ["폴더 선택", "파일 선택", "취소"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice.response === 2) return null;
+
+    const pickingDirectory = choice.response === 0;
+    const selected = await dialog.showOpenDialog({
+      title: pickingDirectory ? "가져올 더미 데이터 폴더 선택" : "가져올 JSON 또는 ZIP 파일 선택",
+      buttonLabel: "선택",
+      properties: pickingDirectory ? ["openDirectory"] : ["openFile"],
+      ...(pickingDirectory
+        ? {}
+        : {
+            filters: [
+              { name: "더미 데이터", extensions: ["zip", "json"] },
+              { name: "모든 파일", extensions: ["*"] },
+            ],
+          }),
+    });
+    return selected.canceled ? null : (selected.filePaths[0] ?? null);
+  }
+
   const first = await dialog.showOpenDialog({
     title: "가져올 프로젝트 (ZIP, project.json 폴더, 루트 JSON 폴더, 또는 하위폴더별 JSON)",
-    properties: darwin ? ["openFile", "openDirectory"] : ["openFile"],
+    properties: ["openFile", "openDirectory"],
     filters: [
       { name: "프로젝트", extensions: ["zip", "json"] },
       { name: "모든 파일", extensions: ["*"] },
     ],
   });
   if (!first.canceled && first.filePaths[0]) return first.filePaths[0];
-
-  if (!darwin && first.canceled) {
-    const second = await dialog.showOpenDialog({
-      title: "가져올 프로젝트 폴더 (project.json 포함)",
-      properties: ["openDirectory"],
-    });
-    if (!second.canceled && second.filePaths[0]) return second.filePaths[0];
-  }
   return null;
 }
 
