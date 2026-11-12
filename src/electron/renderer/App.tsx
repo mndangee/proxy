@@ -83,6 +83,20 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    const onAppNavigate = (event: Event): void => {
+      const path = event instanceof CustomEvent && typeof event.detail?.path === "string"
+        ? event.detail.path
+        : useHashFallback
+          ? window.location.hash.slice(1)
+          : `${window.location.pathname}${window.location.search}`
+      setRoute(pathnameToRoute(path))
+      setLocationKey(getLocationKey())
+    }
+    window.addEventListener('dataforge-navigate', onAppNavigate)
+    return () => window.removeEventListener('dataforge-navigate', onAppNavigate)
+  }, [])
+
+  useEffect(() => {
     if (useHashFallback) {
       const onHash = (): void => {
         const hash = window.location.hash.slice(1).trim()

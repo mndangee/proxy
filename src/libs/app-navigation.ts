@@ -57,7 +57,11 @@ export function navigateApp(path: string): void {
       const head = raw.split("?")[0] || "home";
       window.location.hash = head;
     }
+    // 일부 Windows 패키지 환경에서는 hashchange 전달이 늦거나 누락될 수 있습니다.
+    // 주소 변경과 별개로 앱 라우터에 직접 이동을 알려 화면을 즉시 갱신합니다.
+    window.dispatchEvent(new CustomEvent("dataforge-navigate", { detail: { path: normalized } }));
     return;
   }
-  window.location.assign(normalized);
+  window.history.pushState(null, "", normalized);
+  window.dispatchEvent(new CustomEvent("dataforge-navigate", { detail: { path: normalized } }));
 }
