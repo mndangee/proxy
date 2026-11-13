@@ -244,25 +244,36 @@ async function findProjectDirWithManifest(root: string): Promise<string | null> 
   return null;
 }
 
-async function pickImportSourcePath(): Promise<string | null> {
-  const darwin = process.platform === "darwin";
+type ImportSourceKind = "file" | "folder";
+
+async function pickImportSourcePath(sourceKind?: ImportSourceKind): Promise<string | null> {
+  if (sourceKind) {
+    const pickingDirectory = sourceKind === "folder";
+    const selected = await dialog.showOpenDialog({
+      title: pickingDirectory ? "가져올 더미 데이터 폴더 선택" : "가져올 JSON 또는 ZIP 파일 선택",
+      buttonLabel: "선택",
+      properties: pickingDirectory ? ["openDirectory"] : ["openFile"],
+      ...(pickingDirectory
+        ? {}
+        : {
+            filters: [
+              { name: "더미 데이터", extensions: ["zip", "json"] },
+              { name: "모든 파일", extensions: ["*"] },
+            ],
+          }),
+    });
+    return selected.canceled ? null : (selected.filePaths[0] ?? null);
+  }
+
   const first = await dialog.showOpenDialog({
     title: "가져올 프로젝트 (ZIP, project.json 폴더, 루트 JSON 폴더, 또는 하위폴더별 JSON)",
-    properties: darwin ? ["openFile", "openDirectory"] : ["openFile"],
+    properties: ["openFile", "openDirectory"],
     filters: [
       { name: "프로젝트", extensions: ["zip", "json"] },
       { name: "모든 파일", extensions: ["*"] },
     ],
   });
   if (!first.canceled && first.filePaths[0]) return first.filePaths[0];
-
-  if (!darwin && first.canceled) {
-    const second = await dialog.showOpenDialog({
-      title: "가져올 프로젝트 폴더 (project.json 포함)",
-      properties: ["openDirectory"],
-    });
-    if (!second.canceled && second.filePaths[0]) return second.filePaths[0];
-  }
   return null;
 }
 
@@ -2744,9 +2755,9 @@ export function registerProjectFsIpc(): void {
     return { ok: true as const, project: imported };
   };
 
-  ipcMain.handle("project-fs:analyzeImport", async () => {
+  ipcMain.handle("project-fs:analyzeImport", async (_e, sourceKind: unknown) => {
     clearExpiredImportSessions();
-    const picked = await pickImportSourcePath();
+    const picked = await pickImportSourcePath(sourceKind === "file" || sourceKind === "folder" ? sourceKind : undefined);
     if (!picked) return { ok: false as const, error: "cancelled" };
     const interfaceSearchRoots = await resolveImportInterfaceSearchRoots(picked);
     const plan = await prepareImportPlan(picked, interfaceSearchRoots);

@@ -56,7 +56,9 @@ function findRequestApiMetadata(request: ProxyRequestRecord, servingFolderName: 
 function mockApiDetailHref(request: ProxyRequestRecord, metadata: RequestApiMetadata | null): string | null {
   if (request.result !== "mock") return null;
 
-  const apiName = metadata?.name ?? "";
+  // 이전 기록이나 외부 모의 서버 응답에는 apiName 헤더가 없을 수 있습니다.
+  // 가져온 더미 데이터는 tranId가 API 이름인 경우가 많으므로 상세 화면 이동의 안전한 폴백으로 사용합니다.
+  const apiName = metadata?.name?.trim() || request.apiName?.trim() || request.tranId?.trim() || "";
   if (!apiName) return null;
   return `/api/${encodeURIComponent(apiName)}`;
 }
@@ -262,19 +264,13 @@ export default function RecentRequestsDrawer(): JSX.Element {
                   navigateApp(apiDetailHref);
                 };
                 return (
-                  <article
+                  <button
+                    type="button"
                     key={request.id}
-                    role={canEditMock ? "button" : undefined}
-                    tabIndex={canEditMock ? 0 : undefined}
+                    disabled={!canEditMock}
                     title={canEditMock ? "사용된 더미 데이터 수정" : undefined}
-                    className={`rounded-4 border border-gray-200 bg-white p-4 ${canEditMock ? "hover:border-border-primary hover:bg-background-primary-weak cursor-pointer transition-colors" : ""}`}
+                    className={`rounded-4 w-full border border-gray-200 bg-white p-4 text-left ${canEditMock ? "hover:border-border-primary hover:bg-background-primary-weak cursor-pointer transition-colors" : "cursor-default"}`}
                     onClick={openMockEditor}
-                    onKeyDown={(event) => {
-                      if (canEditMock && (event.key === "Enter" || event.key === " ")) {
-                        event.preventDefault();
-                        openMockEditor();
-                      }
-                    }}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -299,7 +295,7 @@ export default function RecentRequestsDrawer(): JSX.Element {
                       {request.responseLabel ? <><span>·</span><span>{request.responseLabel}</span></> : null}
                     </div>
                     {request.error ? <p className="typo-caption-1 mt-2 text-red-700">{request.error}</p> : null}
-                  </article>
+                  </button>
                 );
               })}
                   </div>

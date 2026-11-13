@@ -19,6 +19,7 @@ import {
   getProjectHref,
   updateProjectFavorite,
 } from "@/libs/projects/store";
+import { navigateApp } from "@/libs/app-navigation";
 
 // Types
 import type { Project } from "@/types";
@@ -75,8 +76,19 @@ export default function ProjectCard(props: IProjectCardProps) {
 
   return (
     <>
-      <article className="bg-background-white rounded-5 border-border-enabled relative block h-[168px] w-full min-w-0 border p-6 shadow-sm transition-shadow hover:shadow-md">
-        <a href={projectPath} className="absolute inset-0 z-0 rounded-[inherit]" aria-label={`${project.name} 프로젝트 열기`} />
+      <article
+        role="button"
+        tabIndex={0}
+        aria-label={`${project.name} 프로젝트 열기`}
+        className="bg-background-white rounded-5 border-border-enabled relative block h-[168px] w-full min-w-0 cursor-pointer border p-6 shadow-sm transition-shadow hover:shadow-md"
+        onClick={() => navigateApp(projectPath)}
+        onKeyDown={(event) => {
+          if (event.currentTarget === event.target && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            navigateApp(projectPath);
+          }
+        }}
+      >
         <div className="pointer-events-none relative z-10 flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="typo-heading-2 text-label-normal truncate font-bold">{project.name}</div>
