@@ -51,24 +51,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const navigate = useCallback((path: string) => {
-    if (useHashFallback) {
-      navigateApp(path)
-      const hashNow = window.location.hash.slice(1).trim()
-      const routePart = hashNow.split('?')[0].split('#')[0] || 'home'
-      setRoute(pathnameToRoute(`/${routePart}`))
-      setLocationKey(getLocationKey())
-      return
-    }
-    const normalized = path.startsWith('/') ? path : `/${path}`
-    window.history.pushState(null, '', normalized)
-    let pathOnly = normalized
-    try {
-      pathOnly = new URL(normalized, window.location.href).pathname
-    } catch {
-      pathOnly = normalized.split('?')[0].split('#')[0]
-    }
-    setRoute(pathnameToRoute(pathOnly))
-    setLocationKey(getLocationKey())
+    navigateApp(path)
   }, [])
 
   // path 모드: 초기 로드 시 #home, #licenses 등 해시가 있으면 path로 치환해 URL 정리
@@ -83,17 +66,25 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (useHashFallback) {
-      const onHash = (): void => {
-        const hash = window.location.hash.slice(1).trim()
-        setRoute(pathnameToRoute(`/${hash.split('?')[0].split('#')[0]}`))
-        setLocationKey(getLocationKey())
+    const onAppNavigate = (event: Event): void => {
+      const rawPath = event instanceof CustomEvent && typeof event.detail?.path === 'string' ? event.detail.path : '/'
+      const normalized = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+      if (useHashFallback) {
+        const hashPath = normalized === '/' ? 'home' : normalized.slice(1)
+        window.history.pushState(null, '', `#${hashPath}`)
+      } else {
+        window.history.pushState(null, '', normalized)
       }
-      window.addEventListener('hashchange', onHash)
-      return () => window.removeEventListener('hashchange', onHash)
+      setRoute(pathnameToRoute(normalized))
+      setLocationKey(useHashFallback ? window.location.hash.slice(1).trim() || 'home' : normalized)
     }
+    window.addEventListener('dataforge-navigate', onAppNavigate)
+    return () => window.removeEventListener('dataforge-navigate', onAppNavigate)
+  }, [])
+
+  useEffect(() => {
     const onPopState = (): void => {
-      setRoute(pathnameToRoute(window.location.pathname))
+      setRoute(getRouteFromLocation())
       setLocationKey(getLocationKey())
     }
     window.addEventListener('popstate', onPopState)

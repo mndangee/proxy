@@ -44,20 +44,7 @@ export function navigateApp(path: string): void {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   const beforeNavigate = new CustomEvent("dataforge-before-navigate", { cancelable: true, detail: { path: normalized } });
   if (!window.dispatchEvent(beforeNavigate)) return;
-  if (usesHashRouting()) {
-    try {
-      const baseHref = window.location.href.replace(/#.*$/, "");
-      const u = new URL(normalized, baseHref);
-      let pathPart = u.pathname.replace(/^\//, "").trim();
-      if (!pathPart) pathPart = "home";
-      const search = u.search.replace(/^\?/, "");
-      window.location.hash = search ? `${pathPart}?${search}` : pathPart;
-    } catch {
-      const raw = normalized.slice(1);
-      const head = raw.split("?")[0] || "home";
-      window.location.hash = head;
-    }
-    return;
-  }
-  window.location.assign(normalized);
+  // URL 변경과 화면 상태 갱신은 App 라우터 한곳에서만 처리합니다.
+  // hashchange와 직접 상태 갱신이 중복 실행되면 Windows 패키지에서 이전 화면이 잠시 남을 수 있습니다.
+  window.dispatchEvent(new CustomEvent("dataforge-navigate", { detail: { path: normalized } }));
 }

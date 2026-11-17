@@ -181,16 +181,36 @@ function sameWorkdir(actual: string | undefined, expected: string): boolean {
   return Boolean(actual) && resolve(actual!) === resolve(expected);
 }
 
-async function stopMatchingUpstream(port: number, workdir: string): Promise<void> {
+function normalizedProcessText(value: string): string {
+  return value.replace(/\\/g, "/").toLowerCase();
+}
+
+function managedServerScriptNames(command: string): string[] {
+  return [...command.matchAll(/(?:^|[\\/\s"'])([^\\/\s"']+\.(?:c?js|mjs))(?=$|\s|["'])/gi)]
+    .map((match) => match[1]?.trim().toLowerCase())
+    .filter((value): value is string => Boolean(value));
+}
+
+/** Windows는 Win32_Process에서 cwd를 제공하지 않으므로 저장된 폴더·서버 스크립트명도 함께 비교합니다. */
+function matchesManagedServer(info: ListenerInfo, workdir: string, command: string): boolean {
+  if (sameWorkdir(info.cwd, workdir)) return true;
+  if (process.platform !== "win32" || !info.command?.trim()) return false;
+  const actualCommand = normalizedProcessText(info.command);
+  const normalizedWorkdir = normalizedProcessText(resolve(workdir));
+  if (actualCommand.includes(normalizedWorkdir)) return true;
+  return managedServerScriptNames(command).some((scriptName) => actualCommand.includes(`/${scriptName}`) || actualCommand.includes(` ${scriptName}`));
+}
+
+async function stopMatchingUpstream(port: number, workdir: string, command: string): Promise<void> {
   for (const pid of await listenerPids(port)) {
     const info = await describeListener(pid);
-    if (sameWorkdir(info.cwd, workdir)) {
+    if (matchesManagedServer(info, workdir, command)) {
       try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
     }
   }
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const remaining = await Promise.all((await listenerPids(port)).map(describeListener));
-    if (!remaining.some((info) => sameWorkdir(info.cwd, workdir))) return;
+    if (!remaining.some((info) => matchesManagedServer(info, workdir, command))) return;
     await new Promise((done) => setTimeout(done, 250));
   }
 }
@@ -202,12 +222,12 @@ export async function restorePendingProxyTakeoverOnStartup(): Promise<
   if (!takeover) return { ok: true, restored: false };
   activeTakeover = takeover;
   const current = await Promise.all((await listenerPids(takeover.port)).map(describeListener));
-  if (current.some((info) => sameWorkdir(info.cwd, takeover.workdir))) {
+  if (current.some((info) => matchesManagedServer(info, takeover.workdir, takeover.command))) {
     await clearTakeoverState();
     return { ok: true, restored: true };
   }
   if (current.length > 0) return { ok: false, error: `포트 ${takeover.port}을 다른 프로그램이 사용 중이어서 자동 복구하지 않았습니다.` };
-  await stopMatchingUpstream(takeover.upstreamPort, takeover.workdir);
+  await stopMatchingUpstream(takeover.upstreamPort, takeover.workdir, takeover.command);
   const restored = await restoreServerAfterFailedTakeover(takeover.port, takeover.workdir, takeover.command);
   return restored.ok ? { ok: true, restored: true } : restored;
 }

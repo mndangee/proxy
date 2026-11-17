@@ -381,7 +381,7 @@ interface ProjectsDiskApi {
   export: (folderName: string) => Promise<unknown>;
   exportZip: (folderName: string) => Promise<unknown>;
   import: () => Promise<unknown>;
-  analyzeImport: () => Promise<unknown>;
+  analyzeImport: (sourceKind: "file" | "folder") => Promise<unknown>;
   executeImport: (sessionId: string) => Promise<unknown>;
   cancelImport: (sessionId: string) => Promise<unknown>;
   migrateFromLegacy: (legacy: unknown[]) => Promise<unknown>;
@@ -2319,13 +2319,13 @@ export type ProjectImportAnalysis = {
   fileResults?: ProjectImportFileResult[];
 };
 
-export async function analyzeSharedProjectImport(): Promise<
+export async function analyzeSharedProjectImport(sourceKind: "file" | "folder"): Promise<
   { ok: true; analysis: ProjectImportAnalysis } | { ok: false; error: string; validationIssues?: string[] }
 > {
   const disk = getProjectsApi();
   if (!disk) return { ok: false, error: "electron-only" };
   try {
-    const raw = (await disk.analyzeImport()) as { ok?: boolean; analysis?: ProjectImportAnalysis; error?: string; validationIssues?: string[] };
+    const raw = (await disk.analyzeImport(sourceKind)) as { ok?: boolean; analysis?: ProjectImportAnalysis; error?: string; validationIssues?: string[] };
     if (!raw.ok || !raw.analysis) return { ok: false, error: raw.error ?? "import-analysis-failed", validationIssues: raw.validationIssues };
     return { ok: true, analysis: raw.analysis };
   } catch {

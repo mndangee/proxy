@@ -16,6 +16,7 @@ let quitCleanupStarted = false;
 let quitCleanupFinished = false;
 type StartupRecoveryNotice = { type: "success" | "error"; message: string };
 let startupRecoveryNotice: StartupRecoveryNotice | null = null;
+let startupInitialization: Promise<void> = Promise.resolve();
 
 function createWindow(): void {
   // Create the browser window.
@@ -51,7 +52,7 @@ function createWindow(): void {
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   // Set app user model id for windows
   electronApp.setAppUserModelId("com.electron");
 
@@ -69,28 +70,41 @@ app.whenReady().then(async () => {
   registerProjectFsIpc();
   registerMockProxyIpc();
   ipcMain.removeHandler("proxy:get-startup-recovery-notice");
-  ipcMain.handle("proxy:get-startup-recovery-notice", () => {
+  ipcMain.handle("proxy:get-startup-recovery-notice", async () => {
+    await startupInitialization;
     const notice = startupRecoveryNotice;
     startupRecoveryNotice = null;
     return notice;
   });
-  await initializeProxyRequestHistory();
-  const crashRecovery = await restorePendingProxyTakeoverOnStartup();
-  if (!crashRecovery.ok || crashRecovery.restored) {
-    await disableProxyConfigAfterCrashRecovery().catch((error) => console.error("[startup-recovery] failed to disable proxy config:", error));
-    if (!crashRecovery.ok) {
-      console.error("[startup-recovery]", crashRecovery.error);
+
+  // 창은 즉시 표시하고, 디스크 기록 및 이전 서버 복구는 백그라운드에서 처리합니다.
+  // 복구가 오래 걸리거나 실패해도 사용자는 빈 화면을 기다리지 않습니다.
+  startupInitialization = (async () => {
+    try {
+      await initializeProxyRequestHistory();
+      const crashRecovery = await restorePendingProxyTakeoverOnStartup();
+      if (!crashRecovery.ok || crashRecovery.restored) {
+        await disableProxyConfigAfterCrashRecovery().catch((error) => console.error("[startup-recovery] failed to disable proxy config:", error));
+        if (!crashRecovery.ok) {
+          console.error("[startup-recovery]", crashRecovery.error);
+          startupRecoveryNotice = {
+            type: "error",
+            message: `프로젝트 서버를 자동으로 복구하지 못했습니다.\n\n${crashRecovery.error}\n\n프록시 설정에서 서버 폴더와 실행 방법을 확인한 뒤 다시 연결해 주세요.`,
+          };
+        } else {
+          startupRecoveryNotice = { type: "success", message: "이전에 전환했던 프로젝트 서버를 원래 포트로 복구했습니다." };
+        }
+      } else {
+        await applyMockProxyFromConfig();
+      }
+    } catch (error) {
+      console.error("[startup] initialization failed:", error);
       startupRecoveryNotice = {
         type: "error",
-        message: `프로젝트 서버를 자동으로 복구하지 못했습니다.\n\n${crashRecovery.error}\n\n프록시 설정에서 서버 폴더와 실행 방법을 확인한 뒤 다시 연결해 주세요.`,
+        message: "시작 설정을 확인하는 중 오류가 발생했습니다. 앱은 계속 사용할 수 있으며, 연결 설정에서 상태를 다시 확인해 주세요.",
       };
-    } else {
-      startupRecoveryNotice = { type: "success", message: "이전에 전환했던 프로젝트 서버를 원래 포트로 복구했습니다." };
     }
-  } else {
-    void applyMockProxyFromConfig();
-  }
-
+  })();
   createWindow();
 
   app.on("activate", function () {
