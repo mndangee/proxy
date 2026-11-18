@@ -201,16 +201,6 @@ export default function HomePage() {
               <div className="mb-4 flex items-end justify-between gap-3 border-b border-gray-200">
                 <div>{showProjectTabs ? <ProjectTab activeTab={projectTab} onTabChange={setProjectTab} /> : null}</div>
                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-                  {proxyConnectionState !== "disconnected" ? (
-                    <span
-                      role="status"
-                      aria-live="polite"
-                      className={`typo-caption-1 flex items-center gap-2 font-semibold ${proxyConnectionState === "connected" ? "text-emerald-700" : "text-red-700"}`}
-                    >
-                      <span className={`h-2 w-2 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : "bg-red-500"}`} />
-                      {proxyConnectionState === "connected" ? "더미 응답 사용 중" : "연결 확인 필요"}
-                    </span>
-                  ) : null}
                   <Btn
                     category="secondary"
                     variant
@@ -226,6 +216,13 @@ export default function HomePage() {
                     size="medium"
                     width={160}
                     className="!justify-center"
+                    startIcon={(
+                      <span
+                        role="status"
+                        aria-label={proxyConnectionState === "connected" ? "연결됨" : proxyConnectionState === "attention" ? "연결 확인 필요" : "연결 안 됨"}
+                        className={`h-2 w-2 shrink-0 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : proxyConnectionState === "attention" ? "bg-red-500" : "bg-gray-400"}`}
+                      />
+                    )}
                     onClick={() => setProxySettingsOpen(true)}
                   >
                     {proxyConnectionState === "attention" ? "연결 확인" : proxyConnectionState === "connected" ? "연결 설정" : "더미 응답 연결"}

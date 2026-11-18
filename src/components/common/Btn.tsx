@@ -38,15 +38,15 @@ export default function Btn({ category = "primary", size = "medium", ...props }:
   };
 
   const btnSize: Record<BtnSizeType, string> = {
-    large: "typo-body-2-normal px-5 py-4 h-10 gap-3",
-    medium: "typo-body-2-normal px-5 py-3 h-9 gap-3",
-    small: "typo-caption-1 px-5 py-3 h-8 gap-2",
+    large: "typo-body-2-normal h-10 px-5 gap-3",
+    medium: "typo-body-2-normal h-9 px-5 gap-3",
+    small: "typo-caption-1 h-8 px-4 gap-2",
   };
 
   return (
     <button
       type="button"
-      className={`${props.variant ? variantCategory[category] : btnCategory[category]} ${btnSize[size]} ${props.className ?? ""} cn-center rounded-3 cursor-pointer font-medium disabled:cursor-no-drop disabled:opacity-50`}
+      className={`${props.variant ? variantCategory[category] : btnCategory[category]} ${btnSize[size]} ${props.className ?? ""} cn-center box-border shrink-0 cursor-pointer whitespace-nowrap rounded-3 leading-none font-medium disabled:cursor-no-drop disabled:opacity-50`}
       style={{ width: btnWidth }}
       onClick={props.onClick}
       disabled={props.disabled}

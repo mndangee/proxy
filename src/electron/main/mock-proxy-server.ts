@@ -2,7 +2,7 @@ import http from "node:http";
 import net from "node:net";
 import { promises as fs } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { ipcMain } from "electron";
 import type { AppProxyConfig, MockActiveApiResponseRef, MockProfileType } from "@/types";
@@ -430,10 +430,27 @@ function rowMatchesQuery(row: StoreRow, searchParams: URLSearchParams): boolean 
 
 type PickedConfiguration = { configuration: string; label?: string; value?: string; editorType: string; apiName?: string };
 
+function findStoreRows(store: { byApiName: Record<string, StoreRow[]> }, apiName: string): StoreRow[] | undefined {
+  const direct = store.byApiName[apiName];
+  if (direct) return direct;
+  const normalized = normalizeMockLookupKey(apiName);
+  const matchedKey = Object.keys(store.byApiName).find((key) => normalizeMockLookupKey(key) === normalized);
+  return matchedKey ? store.byApiName[matchedKey] : undefined;
+}
+
+function selectServingProjectRoots(projectRoots: string[], servingFolderName: string | null | undefined): string[] {
+  const selected = servingFolderName?.trim();
+  if (!selected) return projectRoots;
+  const normalized = normalizeMockLookupKey(selected);
+  const matched = projectRoots.filter((root) => normalizeMockLookupKey(basename(root)) === normalized);
+  return matched.length > 0 ? matched : projectRoots;
+}
+
 function pickConfiguration(
   rows: StoreRow[] | undefined,
   active: MockActiveApiResponseRef | null | undefined,
   searchParams: URLSearchParams,
+  activeOnly = false,
 ): PickedConfiguration | null {
   if (!rows?.length) return null;
 
@@ -454,6 +471,7 @@ function pickConfiguration(
     const byValue = fallbackRows.find((r) => (r.value ?? "").trim() === responseValue);
     const fromValue = byValue ? normalizeConfigurationForMock(byValue.configuration) : null;
     if (fromValue && byValue) return { configuration: fromValue, label: byValue.label, value: byValue.value, editorType: byValue.editorType };
+    if (activeOnly) return null;
   }
   const def = fallbackRows.find((r) => r.editorType === "default");
   const fallback = def ?? fallbackRows[0];
@@ -575,8 +593,8 @@ async function findRawConfigurationFromProjects(
       if (!k) continue;
       for (const projectRoot of projectRoots) {
         const store = await readResponsesStoreFromDisk(projectRoot);
-        const rows = store.byApiName[k] as StoreRow[] | undefined;
-        const picked = pickConfiguration(rows, resolvedActive, searchParams);
+        const rows = findStoreRows(store, k);
+        const picked = pickConfiguration(rows, resolvedActive, searchParams, true);
         if (picked != null) return { ...picked, apiName: k };
       }
     }
@@ -586,7 +604,7 @@ async function findRawConfigurationFromProjects(
     if (!k) continue;
     for (const projectRoot of projectRoots) {
       const store = await readResponsesStoreFromDisk(projectRoot);
-      const rows = store.byApiName[k] as StoreRow[] | undefined;
+      const rows = findStoreRows(store, k);
       const picked = pickConfiguration(rows, undefined, searchParams);
       if (picked != null) return { ...picked, apiName: k };
     }
@@ -639,7 +657,9 @@ async function loadManifestsForRoots(projectRoots: string[]): Promise<ProjectMan
 }
 
 async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const projectRoots = await listDiskProjectRootPaths();
+  const allProjectRoots = await listDiskProjectRootPaths();
+  const diskCfg = await readAppProxyConfigDisk();
+  const projectRoots = selectServingProjectRoots(allProjectRoots, diskCfg.proxyServer.servingFolderName);
   const manifests = await loadManifestsForRoots(projectRoots);
   const cors = buildMergedCorsHeaders(manifests, req);
 
@@ -672,7 +692,6 @@ async function handleMockRequest(req: http.IncomingMessage, res: http.ServerResp
           req.on("error", reject);
         });
   const methodOk = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method);
-  const diskCfg = await readAppProxyConfigDisk();
   const profile = diskCfg.mockProfile ?? "legacy-tran-envelope";
   const { lookupKey, envelopeTranId } = resolveMockLookupKey({
     profile,
