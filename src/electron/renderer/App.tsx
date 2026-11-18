@@ -9,7 +9,7 @@ import ProjectApiPage from '../../app/api/page'
 import ApiJsonPage from '../../app/api/json/page'
 
 import { navigateApp } from '../../libs/app-navigation'
-import { getProjectForApiName, getProjectRouteSlug, hydrateProjects } from '../../libs/projects/store'
+import { getProjectForApiName, getProjectRouteSlug, hydrateProjects, PROJECTS_CHANGED_EVENT } from '../../libs/projects/store'
 
 const useHashFallback = typeof window !== 'undefined' && window.location?.protocol === 'file:'
 
@@ -44,10 +44,13 @@ function getLocationKey(): string {
 function App(): React.JSX.Element {
   const [route, setRoute] = useState(getRouteFromLocation)
   const [locationKey, setLocationKey] = useState(getLocationKey)
-  const [bootReady, setBootReady] = useState(false)
+  const [, setProjectsRevision] = useState(0)
 
   useEffect(() => {
-    void hydrateProjects().finally(() => setBootReady(true))
+    const refreshProjectRoutes = (): void => setProjectsRevision((revision) => revision + 1)
+    window.addEventListener(PROJECTS_CHANGED_EVENT, refreshProjectRoutes)
+    void hydrateProjects().catch((error) => console.error('[startup] failed to hydrate projects:', error))
+    return () => window.removeEventListener(PROJECTS_CHANGED_EVENT, refreshProjectRoutes)
   }, [])
 
   const navigate = useCallback((path: string) => {
@@ -139,11 +142,7 @@ function App(): React.JSX.Element {
 
   return (
     <RootLayout>
-      {bootReady ? (
-        <Page key={pageMountKey} {...pageProps} />
-      ) : (
-        <div className="typo-body-1-normal text-label-assistant flex min-h-0 flex-1 items-center justify-center">불러오는 중…</div>
-      )}
+      <Page key={pageMountKey} {...pageProps} />
     </RootLayout>
   )
 }

@@ -2,20 +2,28 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>Electron</title>
+    <title>DataForge</title>
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; connect-src 'self' https://cdn.jsdelivr.net ws: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data:"
+      content="default-src 'self'; connect-src 'self' ws: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:"
     />
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
-    />
+    <style>
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      body { background: #fafafa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif; }
+      .startup-screen { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; color: #666; }
+      .startup-screen__content { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 600; }
+      .startup-screen__spinner { width: 18px; height: 18px; border: 2px solid #ccddff; border-top-color: #0057ff; border-radius: 50%; animation: startup-spin 0.8s linear infinite; }
+      @keyframes startup-spin { to { transform: rotate(360deg); } }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="startup-screen" role="status" aria-live="polite">
+        <div class="startup-screen__content"><span class="startup-screen__spinner"></span><span>DataForge를 여는 중…</span></div>
+      </div>
+    </div>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>
