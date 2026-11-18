@@ -1981,6 +1981,8 @@ type ImportPlan = {
   sourcePath: string;
   /** 스냅샷 복사 전 사용자가 선택한 실제 위치. API 모듈 메타데이터 탐색에만 사용한다. */
   interfaceSearchRoots: string[];
+  /** 사용자가 선택한 실제 폴더 경로. 스냅샷 경로와 구분한다. */
+  importSourcePath?: string;
   snapshotRoot: string;
   analysis: Omit<ImportAnalysis, "sessionId">;
 };
@@ -1989,6 +1991,49 @@ type PendingImportSession = { plan: ImportPlan; createdAt: number };
 
 const pendingImportSessions = new Map<string, PendingImportSession>();
 const IMPORT_SESSION_TTL_MS = 30 * 60 * 1000;
+
+type ImportSourceRegistry = {
+  version: 1;
+  sources: Record<string, { projectId: string; projectName: string }>;
+};
+
+function getImportSourceRegistryPath(): string {
+  return join(app.getPath("userData"), "import-source-registry.json");
+}
+
+function normalizeImportSourcePathForCompare(value: string): string {
+  const normalized = value.trim().replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
+}
+
+async function hasImportedSourceFolder(importSourcePath: string, projectName: string): Promise<boolean> {
+  const targetPath = normalizeImportSourcePathForCompare(importSourcePath);
+  const targetName = projectName.trim().toLocaleLowerCase();
+  const manifests = await Promise.all((await listDiskProjectRootPaths()).map((root) => readManifest(root)));
+  const projectIds = new Set(manifests.flatMap((manifest) => manifest ? [manifest.id] : []));
+  try {
+    const parsed = JSON.parse(await fs.readFile(getImportSourceRegistryPath(), "utf-8")) as ImportSourceRegistry;
+    const saved = parsed.sources?.[targetPath];
+    if (saved?.projectId && projectIds.has(saved.projectId)) return true;
+  } catch {
+    /* 경로 기록 도입 전 데이터는 아래 이름 비교로 확인 */
+  }
+  // 경로 기록 기능 도입 전에 가져온 프로젝트도 한 번은 이름으로 감지한다.
+  return manifests.some((manifest) => manifest?.name.trim().toLocaleLowerCase() === targetName);
+}
+
+async function rememberImportedSourceFolder(importSourcePath: string, project: ProjectManifest): Promise<void> {
+  const key = normalizeImportSourcePathForCompare(importSourcePath);
+  let registry: ImportSourceRegistry = { version: 1, sources: {} };
+  try {
+    const parsed = JSON.parse(await fs.readFile(getImportSourceRegistryPath(), "utf-8")) as ImportSourceRegistry;
+    if (parsed?.version === 1 && parsed.sources && typeof parsed.sources === "object") registry = parsed;
+  } catch {
+    /* 최초 기록 */
+  }
+  registry.sources[key] = { projectId: project.id, projectName: project.name };
+  await fs.writeFile(getImportSourceRegistryPath(), JSON.stringify(registry, null, 2), "utf-8");
+}
 
 function getImportInterfaceSourcePath(): string {
   return join(app.getPath("userData"), "import-interface-source.json");
@@ -2233,7 +2278,9 @@ async function prepareImportPlan(picked: string, interfaceSearchRoots: string[])
       await fs.rm(snapshotRoot, { recursive: true, force: true });
       return analysis;
     }
-    return { sourcePath, interfaceSearchRoots, snapshotRoot, analysis };
+    const pickedStat = await fs.stat(picked);
+    const importSourcePath = pickedStat.isDirectory() ? await fs.realpath(picked).catch(() => picked) : undefined;
+    return { sourcePath, interfaceSearchRoots, ...(importSourcePath ? { importSourcePath } : {}), snapshotRoot, analysis };
   } catch {
     await fs.rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
     return { error: picked.toLowerCase().endsWith(".zip") ? "invalid-zip" : "invalid-manifest" };
@@ -2476,6 +2523,7 @@ export function registerProjectFsIpc(): void {
         fs.rm(getAppProxyConfigPath(), { force: true }),
         fs.rm(join(app.getPath("userData"), "recent-proxy-requests.json"), { force: true }),
         fs.rm(join(app.getPath("userData"), "import-interface-source.json"), { force: true }),
+        fs.rm(getImportSourceRegistryPath(), { force: true }),
       ]);
       await fs.writeFile(getAppProxyConfigPath(), JSON.stringify(defaultAppProxyConfig(), null, 2), "utf-8");
       return { ok: true as const, restored: restored.restored };
@@ -2763,9 +2811,19 @@ export function registerProjectFsIpc(): void {
     clearExpiredImportSessions();
     const picked = await pickImportSourcePath(sourceKind === "file" || sourceKind === "folder" ? sourceKind : undefined);
     if (!picked) return { ok: false as const, error: "cancelled" };
+    if (sourceKind === "folder") {
+      const importSourcePath = await fs.realpath(picked).catch(() => picked);
+      if (await hasImportedSourceFolder(importSourcePath, basename(picked))) {
+        return { ok: false as const, error: "duplicate-source-folder" };
+      }
+    }
     const interfaceSearchRoots = await resolveImportInterfaceSearchRoots(picked);
     const plan = await prepareImportPlan(picked, interfaceSearchRoots);
     if ("error" in plan) return { ok: false as const, error: plan.error, validationIssues: plan.validationIssues };
+    if (plan.importSourcePath && await hasImportedSourceFolder(plan.importSourcePath, plan.analysis.projectName)) {
+      await fs.rm(plan.snapshotRoot, { recursive: true, force: true }).catch(() => {});
+      return { ok: false as const, error: "duplicate-source-folder" };
+    }
     const sessionId = randomUUID();
     pendingImportSessions.set(sessionId, { plan, createdAt: Date.now() });
     return { ok: true as const, analysis: { sessionId, ...plan.analysis } satisfies ImportAnalysis };
@@ -2783,6 +2841,9 @@ export function registerProjectFsIpc(): void {
         session.plan.interfaceSearchRoots,
         session.plan.analysis.projectName,
       );
+      if (result.ok && session.plan.importSourcePath) {
+        await rememberImportedSourceFolder(session.plan.importSourcePath, result.project);
+      }
       if (result.ok && !("summary" in result)) return { ...result, summary: session.plan.analysis };
       return result;
     } finally {

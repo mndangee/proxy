@@ -96,6 +96,7 @@ export default function HomePage() {
       else if (error === "invalid-manifest") showImportModal("지원하지 않거나 읽을 수 없는 프로젝트 데이터입니다.");
       else if (error === "invalid-zip") showImportModal("ZIP을 열거나 압축을 풀 수 없습니다.");
       else if (error === "duplicate-name") showImportModal(DUPLICATE_PROJECT_NAME_MESSAGE);
+      else if (error === "duplicate-source-folder") showImportModal("이미 동일한 폴더를 가져왔습니다.\n\n기존 프로젝트에서 더미 데이터를 확인해 주세요.");
       else if (error === "import-session-not-found") showImportModal("가져오기 정보가 만료되었습니다. 파일을 다시 선택해 주세요.");
       else if (error === "app-restart-required") showImportModal("새 가져오기 기능을 사용하려면 앱을 완전히 종료한 후 다시 실행해 주세요.");
       else showImportModal(`가져오기에 실패했습니다. (${error ?? "알 수 없는 오류"})`);
