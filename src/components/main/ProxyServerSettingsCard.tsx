@@ -310,7 +310,12 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
   const selectServerDirectory = async (): Promise<void> => {
     clearError();
     const picked = await pickServerDirectory();
-    if (!picked.ok) return;
+    if (!picked.ok) {
+      if (picked.error !== "cancelled") {
+        setResetNotice(picked.error === "desktop-only" ? "서버 폴더 선택은 DataForge 앱에서 사용할 수 있습니다." : "서버 폴더를 열지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+      return;
+    }
     setWorkdirDraft(picked.path);
     const detected = await detectServerCommand(picked.path);
     if (detected.ok) {
@@ -545,7 +550,7 @@ export default function ProxyServerSettingsCard({ onClose, onBusyChange }: Proxy
                   <span className="typo-body-2-normal text-label-normal font-medium">서버 코드 폴더</span>
                   <div className="mt-2 flex gap-2">
                     <Input value={workdirDraft} width="100%" size="small" placeholder="/Users/…/project/server" disabled={saveBusy || running} error={Boolean(error?.fields?.includes("workdir"))} onChange={(event) => { setWorkdirDraft(event.target.value); clearError(); }} />
-                    <button type="button" className="typo-body-2-normal shrink-0 rounded border border-gray-300 bg-white px-4 text-label-normal" disabled={saveBusy || running} onClick={() => void selectServerDirectory()}>폴더 선택</button>
+                    <button type="button" className="typo-body-2-normal h-8 shrink-0 cursor-pointer rounded border border-gray-300 bg-white px-4 text-label-normal disabled:cursor-not-allowed disabled:opacity-50" disabled={saveBusy || running} onClick={() => void selectServerDirectory()}>폴더 선택</button>
                   </div>
                 </label>
                 <label className="block">
