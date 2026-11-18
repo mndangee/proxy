@@ -435,7 +435,10 @@ export default function ApiJsonPage() {
       const applied = await persistMockActiveApiResponse(
         saved.apiKey,
         { responseValue: saved.responseValue, editorType: saved.editorType },
-        { alsoKeys: tran && tran !== saved.apiKey ? [tran] : [] },
+        {
+          alsoKeys: tran && tran !== saved.apiKey ? [tran] : [],
+          servingFolderName: getProjectForApiName(saved.apiKey)?.folderName ?? null,
+        },
       );
       if (!applied.ok) {
         showNotice(`응답은 저장했지만 사용 설정을 적용하지 못했습니다.\n\n${applied.error}`);

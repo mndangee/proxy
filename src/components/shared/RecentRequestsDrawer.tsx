@@ -162,7 +162,11 @@ export default function RecentRequestsDrawer(): JSX.Element {
 
   const requestGroups = groupRequestsByDate(requests);
   const unreadCount = requests.filter((request) => new Date(request.timestamp).getTime() > seenThroughMs).length;
-  const fabBottom = currentPath === "/api/json" ? 104 : 64;
+  const hideOnDummySettings = currentPath === "/api/json" || /^\/api\/[^/]+$/.test(currentPath);
+
+  useEffect(() => {
+    if (hideOnDummySettings) setOpen(false);
+  }, [hideOnDummySettings]);
 
   if (!portalTarget) return <></>;
 
@@ -188,10 +192,10 @@ export default function RecentRequestsDrawer(): JSX.Element {
           setOpen(true);
         }}
       />
-      <button
+      {!hideOnDummySettings ? <button
         type="button"
         className={`bg-background-primary hover:bg-background-primary-hover fixed flex h-14 w-14 cursor-pointer items-center justify-center rounded-full text-white shadow-lg transition-[opacity,transform,box-shadow] duration-200 hover:scale-105 hover:shadow-xl ${open ? "pointer-events-none translate-x-4 opacity-0" : "translate-x-0 opacity-100"}`}
-        style={{ right: 20, bottom: fabBottom, zIndex: 900, backgroundColor: "#0057FF" }}
+        style={{ right: 20, bottom: 64, zIndex: 900, backgroundColor: "#0057FF" }}
         aria-label="최근 요청 패널 열기"
         title="최근 요청"
         aria-expanded={open}
@@ -204,7 +208,7 @@ export default function RecentRequestsDrawer(): JSX.Element {
             {unreadCount > 99 ? "99+" : unreadCount}
           </span>
         ) : null}
-      </button>
+      </button> : null}
 
       <button
         type="button"

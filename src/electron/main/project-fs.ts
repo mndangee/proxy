@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 
 import AdmZip from "adm-zip";
-import { app, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 
 import type { AppProxyConfig, AppProxyInterceptGatewayConfig, LinkedClientEntry, MockProfileType } from "@/types";
 import {
@@ -2287,8 +2287,12 @@ export function registerProjectFsIpc(): void {
 
   ipcMain.handle("project-fs:getAppProxyConfig", async (): Promise<AppProxyConfig> => readAppProxyConfigDisk());
 
-  ipcMain.handle("project-fs:pickServerDirectory", async () => {
-    const result = await dialog.showOpenDialog({ title: "서버 프로젝트 폴더 선택", properties: ["openDirectory"] });
+  ipcMain.handle("project-fs:pickServerDirectory", async (event) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+    const options = { title: "서버 프로젝트 폴더 선택", properties: ["openDirectory"] as Array<"openDirectory"> };
+    const result = parentWindow
+      ? await dialog.showOpenDialog(parentWindow, options)
+      : await dialog.showOpenDialog(options);
     return result.canceled || !result.filePaths[0] ? { ok: false as const, error: "cancelled" } : { ok: true as const, path: result.filePaths[0] };
   });
 

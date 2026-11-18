@@ -80,61 +80,74 @@ export default function HomePage() {
   const showImportModal = useCallback((message: string) => setImportModal({ open: true, message }), []);
   const closeImportModal = useCallback(() => setImportModal({ open: false, message: "" }), []);
 
-  const showImportError = useCallback((error: string | undefined, validationIssues: string[] = []) => {
-    if (validationIssues.length > 0) {
-      const visible = validationIssues.slice(0, 5);
-      showImportModal(["가져올 수 있는 JSON 응답이 없습니다.", "", ...visible, ...(validationIssues.length > visible.length ? [`외 ${validationIssues.length - visible.length}개`] : [])].join("\n"));
-      return;
-    }
-    if (error === "electron-only") showImportModal("Electron 앱에서만 더미 데이터를 가져올 수 있습니다.");
-    else if (error === "no-json-files") showImportModal("가져올 수 있는 JSON 응답 파일이 없습니다.");
-    else if (error === "invalid-manifest") showImportModal("지원하지 않거나 읽을 수 없는 프로젝트 데이터입니다.");
-    else if (error === "invalid-zip") showImportModal("ZIP을 열거나 압축을 풀 수 없습니다.");
-    else if (error === "duplicate-name") showImportModal(DUPLICATE_PROJECT_NAME_MESSAGE);
-    else if (error === "import-session-not-found") showImportModal("가져오기 정보가 만료되었습니다. 파일을 다시 선택해 주세요.");
-    else if (error === "app-restart-required") showImportModal("새 가져오기 기능을 사용하려면 앱을 완전히 종료한 후 다시 실행해 주세요.");
-    else showImportModal(`가져오기에 실패했습니다. (${error ?? "알 수 없는 오류"})`);
-  }, [showImportModal]);
-
-  const importProject = useCallback((sourceKind: "file" | "folder") => {
-    if (importBusyRef.current) return;
-    importBusyRef.current = true;
-    setImportBusy(true);
-    void (async () => {
-      try {
-      const analyzed = await analyzeSharedProjectImport(sourceKind);
-      if (!analyzed.ok) {
-        if (analyzed.error === "cancelled") return;
-        showImportError(analyzed.error, analyzed.validationIssues);
+  const showImportError = useCallback(
+    (error: string | undefined, validationIssues: string[] = []) => {
+      if (validationIssues.length > 0) {
+        const visible = validationIssues.slice(0, 5);
+        showImportModal(
+          ["가져올 수 있는 JSON 응답이 없습니다.", "", ...visible, ...(validationIssues.length > visible.length ? [`외 ${validationIssues.length - visible.length}개`] : [])].join(
+            "\n",
+          ),
+        );
         return;
       }
+      if (error === "electron-only") showImportModal("Electron 앱에서만 더미 데이터를 가져올 수 있습니다.");
+      else if (error === "no-json-files") showImportModal("가져올 수 있는 JSON 응답 파일이 없습니다.");
+      else if (error === "invalid-manifest") showImportModal("지원하지 않거나 읽을 수 없는 프로젝트 데이터입니다.");
+      else if (error === "invalid-zip") showImportModal("ZIP을 열거나 압축을 풀 수 없습니다.");
+      else if (error === "duplicate-name") showImportModal(DUPLICATE_PROJECT_NAME_MESSAGE);
+      else if (error === "import-session-not-found") showImportModal("가져오기 정보가 만료되었습니다. 파일을 다시 선택해 주세요.");
+      else if (error === "app-restart-required") showImportModal("새 가져오기 기능을 사용하려면 앱을 완전히 종료한 후 다시 실행해 주세요.");
+      else showImportModal(`가져오기에 실패했습니다. (${error ?? "알 수 없는 오류"})`);
+    },
+    [showImportModal],
+  );
 
-      const analysis = analyzed.analysis;
-      const imported = await executeSharedProjectImport(analysis.sessionId);
-      if (!imported.ok) {
-        showImportError(imported.error);
-        return;
-      }
+  const importProject = useCallback(
+    (sourceKind: "file" | "folder") => {
+      if (importBusyRef.current) return;
+      importBusyRef.current = true;
+      setImportBusy(true);
+      void (async () => {
+        try {
+          const analyzed = await analyzeSharedProjectImport(sourceKind);
+          if (!analyzed.ok) {
+            if (analyzed.error === "cancelled") return;
+            showImportError(analyzed.error, analyzed.validationIssues);
+            return;
+          }
 
-      refreshProjects();
-      const summary = imported.summary ?? analysis;
-      setImportComplete({
-        projectName: imported.project.name,
-        projectHref: getProjectHref(imported.project),
-        summary,
-      });
-      } finally {
-        importBusyRef.current = false;
-        setImportBusy(false);
-      }
-    })();
-  }, [refreshProjects, showImportError]);
+          const analysis = analyzed.analysis;
+          const imported = await executeSharedProjectImport(analysis.sessionId);
+          if (!imported.ok) {
+            showImportError(imported.error);
+            return;
+          }
 
-  const handleImportIntroContinue = useCallback((sourceKind: "file" | "folder", skipNextTime: boolean) => {
-    if (skipNextTime) window.localStorage.setItem(IMPORT_GUIDE_HIDDEN_KEY, "true");
-    setImportIntroOpen(false);
-    importProject(sourceKind);
-  }, [importProject]);
+          refreshProjects();
+          const summary = imported.summary ?? analysis;
+          setImportComplete({
+            projectName: imported.project.name,
+            projectHref: getProjectHref(imported.project),
+            summary,
+          });
+        } finally {
+          importBusyRef.current = false;
+          setImportBusy(false);
+        }
+      })();
+    },
+    [refreshProjects, showImportError],
+  );
+
+  const handleImportIntroContinue = useCallback(
+    (sourceKind: "file" | "folder", skipNextTime: boolean) => {
+      if (skipNextTime) window.localStorage.setItem(IMPORT_GUIDE_HIDDEN_KEY, "true");
+      setImportIntroOpen(false);
+      importProject(sourceKind);
+    },
+    [importProject],
+  );
 
   const requestProjectImport = useCallback(() => {
     setImportIntroOpen(true);
@@ -159,12 +172,7 @@ export default function HomePage() {
 
   return (
     <>
-      <NoticeModal
-        isOpen={Boolean(startupRecoveryMessage)}
-        onClose={() => setStartupRecoveryMessage("")}
-        message={startupRecoveryMessage}
-        anchorMain
-      />
+      <NoticeModal isOpen={Boolean(startupRecoveryMessage)} onClose={() => setStartupRecoveryMessage("")} message={startupRecoveryMessage} anchorMain />
       <ImportProjectResultModal
         isOpen={Boolean(importComplete)}
         projectName={importComplete?.projectName ?? ""}
@@ -183,12 +191,41 @@ export default function HomePage() {
         onClose={() => setImportIntroOpen(false)}
         onContinue={handleImportIntroContinue}
       />
-      <Modal isOpen={proxySettingsOpen} onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} size="large" panelClassName="max-w-[700px] !overflow-hidden" anchorMain>
+      <Modal
+        isOpen={proxySettingsOpen}
+        onClose={
+          proxySettingsBusy
+            ? undefined
+            : () => {
+                setProxySettingsOpen(false);
+                void refreshProxyConnectionState();
+              }
+        }
+        size="large"
+        panelClassName="max-w-[700px] !overflow-hidden"
+        anchorMain
+      >
         <div className="max-h-[84vh] overflow-y-auto">
-          <ProxyServerSettingsCard onClose={proxySettingsBusy ? undefined : () => { setProxySettingsOpen(false); void refreshProxyConnectionState(); }} onBusyChange={setProxySettingsBusy} />
+          <ProxyServerSettingsCard
+            onClose={
+              proxySettingsBusy
+                ? undefined
+                : () => {
+                    setProxySettingsOpen(false);
+                    void refreshProxyConnectionState();
+                  }
+            }
+            onBusyChange={setProxySettingsBusy}
+          />
         </div>
       </Modal>
-      <Modal isOpen={dataSettingsOpen} onClose={dataSettingsBusy ? undefined : () => setDataSettingsOpen(false)} size="medium" panelClassName="max-w-[620px] !overflow-hidden" anchorMain>
+      <Modal
+        isOpen={dataSettingsOpen}
+        onClose={dataSettingsBusy ? undefined : () => setDataSettingsOpen(false)}
+        size="medium"
+        panelClassName="max-w-[620px] !overflow-hidden"
+        anchorMain
+      >
         <DataSettingsCard onClose={() => setDataSettingsOpen(false)} onBusyChange={setDataSettingsBusy} />
       </Modal>
 
@@ -201,23 +238,7 @@ export default function HomePage() {
               <div className="mb-4 flex items-end justify-between gap-3 border-b border-gray-200">
                 <div>{showProjectTabs ? <ProjectTab activeTab={projectTab} onTabChange={setProjectTab} /> : null}</div>
                 <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-                  {proxyConnectionState !== "disconnected" ? (
-                    <span
-                      role="status"
-                      aria-live="polite"
-                      className={`typo-caption-1 flex items-center gap-2 font-semibold ${proxyConnectionState === "connected" ? "text-emerald-700" : "text-red-700"}`}
-                    >
-                      <span className={`h-2 w-2 rounded-full ${proxyConnectionState === "connected" ? "bg-emerald-500" : "bg-red-500"}`} />
-                      {proxyConnectionState === "connected" ? "더미 응답 사용 중" : "연결 확인 필요"}
-                    </span>
-                  ) : null}
-                  <Btn
-                    category="secondary"
-                    variant
-                    size="medium"
-                    width={160}
-                    onClick={() => setDataSettingsOpen(true)}
-                  >
+                  <Btn category="secondary" variant size="medium" width={160} onClick={() => setDataSettingsOpen(true)}>
                     데이터 관리
                   </Btn>
                   <Btn
@@ -226,9 +247,17 @@ export default function HomePage() {
                     size="medium"
                     width={160}
                     className="!justify-center"
+                    startIcon={
+                      <span
+                        role="status"
+                        aria-label={proxyConnectionState === "connected" ? "연결됨" : proxyConnectionState === "attention" ? "연결 확인 필요" : "연결 안 됨"}
+                        className="inline-block h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: proxyConnectionState === "connected" ? "#22C55E" : proxyConnectionState === "attention" ? "#E81F1F" : "#BBBBBB" }}
+                      />
+                    }
                     onClick={() => setProxySettingsOpen(true)}
                   >
-                    {proxyConnectionState === "attention" ? "연결 확인" : proxyConnectionState === "connected" ? "연결 설정" : "더미 응답 연결"}
+                    {proxyConnectionState === "attention" ? "연결 확인" : proxyConnectionState === "connected" ? "연결 중" : "더미 응답 연결"}
                   </Btn>
                 </div>
               </div>

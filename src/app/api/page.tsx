@@ -296,7 +296,10 @@ export default function ProjectApiPage({ apiName }: ProjectApiPageProps) {
                     const applied = await persistMockActiveApiResponse(
                       resolvedApiName,
                       { responseValue: item.value, editorType },
-                      { alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [] },
+                      {
+                        alsoKeys: endpoint?.tran?.trim() && endpoint.tran.trim() !== resolvedApiName ? [endpoint.tran.trim()] : [],
+                        servingFolderName: project?.folderName ?? null,
+                      },
                     );
                     if (!applied.ok) {
                       setDeleteErrorNotice({ open: true, message: `응답을 적용하지 못했습니다. (${applied.error})` });

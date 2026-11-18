@@ -2601,7 +2601,7 @@ export async function setStoredApiLatencyMs(apiName: string, ms: number, options
 export async function persistMockActiveApiResponse(
   apiName: string,
   active: MockActiveApiResponseRef | null,
-  options?: { alsoKeys?: string[] },
+  options?: { alsoKeys?: string[]; servingFolderName?: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const keys = new Set<string>();
   const primary = apiName.trim();
@@ -2628,18 +2628,33 @@ export async function persistMockActiveApiResponse(
     try {
       const cur = await getAppProxyConfig();
       const merged = buildMerged(cur.mockActiveApiResponses ?? {});
-      const raw = await disk.setAppProxyConfig({ mockActiveApiResponses: merged });
-      const result = raw as { ok?: boolean; error?: string };
+      const raw = await disk.setAppProxyConfig({
+        mockActiveApiResponses: merged,
+        ...(options?.servingFolderName ? { proxyServer: { servingFolderName: options.servingFolderName } } : {}),
+      });
+      const result = raw as { ok?: boolean; config?: AppProxyConfig; error?: string };
       if (!result.ok) return { ok: false, error: result.error ?? "save-failed" };
       const browserCur = readBrowserAppProxyConfig();
-      writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: merged });
+      writeBrowserAppProxyConfig(result.config ?? {
+        ...browserCur,
+        proxyServer: options?.servingFolderName
+          ? { ...browserCur.proxyServer, servingFolderName: options.servingFolderName }
+          : browserCur.proxyServer,
+        mockActiveApiResponses: merged,
+      });
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : "save-failed" };
     }
   } else {
     const browserCur = readBrowserAppProxyConfig();
-    writeBrowserAppProxyConfig({ ...browserCur, mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}) });
+    writeBrowserAppProxyConfig({
+      ...browserCur,
+      proxyServer: options?.servingFolderName
+        ? { ...browserCur.proxyServer, servingFolderName: options.servingFolderName }
+        : browserCur.proxyServer,
+      mockActiveApiResponses: buildMerged(browserCur.mockActiveApiResponses ?? {}),
+    });
     return { ok: true };
   }
 }
